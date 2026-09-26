@@ -3,19 +3,18 @@ extends RefCounted
 
 const SAMPLES_PER_METER := 0.5
 const MIN_SAMPLES := 8
-const SURFACE_LIFT := 0.02   # ← new: lift road surface above ground to avoid z-fighting
+const SURFACE_LIFT := 0.02
+const VISUAL_INSET := 1.5   # metres trimmed from each segment end at junctions
 
-# Returns an ArrayMesh with one surface: the road slab top.
-# UVs: u = 0 (left edge) → 1 (right edge), v = 0 → 1 along the curve.
-static func build_slab(curve: Curve3D, rt: RoadType) -> ArrayMesh:
+static func build_slab(curve: Curve3D, rt: RoadType, start_inset: float = 0.0, end_inset: float = 0.0) -> ArrayMesh:
 	var length := curve.get_baked_length()
-	if length < 0.1:
+	var usable := length - start_inset - end_inset
+	if usable < 0.5:
 		return null
 
-	var samples := maxi(MIN_SAMPLES, int(length * SAMPLES_PER_METER))
+	var samples := maxi(MIN_SAMPLES, int(usable * SAMPLES_PER_METER))
 	var half_width := rt.total_width() * 0.5
 
-	# Pre-sample positions and tangents.
 	var positions: Array[Vector3] = []
 	var tangents: Array[Vector3] = []
 	positions.resize(samples + 1)
@@ -23,9 +22,11 @@ static func build_slab(curve: Curve3D, rt: RoadType) -> ArrayMesh:
 
 	for i in range(samples + 1):
 		var t := float(i) / float(samples)
-		var offset := t * length
+		var offset := start_inset + t * usable
 		var pos := curve.sample_baked(offset)
+		pos.y += SURFACE_LIFT
 		var ahead := curve.sample_baked(minf(offset + 0.05, length))
+		ahead.y += SURFACE_LIFT
 		var tan := ahead - pos
 		if tan.length_squared() < 0.0001:
 			tan = Vector3.FORWARD
@@ -41,7 +42,6 @@ static func build_slab(curve: Curve3D, rt: RoadType) -> ArrayMesh:
 		var t0 := tangents[i]
 		var t1 := tangents[i + 1]
 
-		# "Right" perpendicular, horizontal (Y is up).
 		var r0 := Vector3.UP.cross(t0)
 		var r1 := Vector3.UP.cross(t1)
 		if r0.length_squared() < 0.001:
@@ -59,11 +59,9 @@ static func build_slab(curve: Curve3D, rt: RoadType) -> ArrayMesh:
 		var v0 := float(i) / float(samples)
 		var v1 := float(i + 1) / float(samples)
 
-		# Triangle 1
 		_vert(st, l0, Vector3.UP, Vector2(0.0, v0))
 		_vert(st, rr0, Vector3.UP, Vector2(1.0, v0))
 		_vert(st, l1, Vector3.UP, Vector2(0.0, v1))
-		# Triangle 2
 		_vert(st, rr0, Vector3.UP, Vector2(1.0, v0))
 		_vert(st, rr1, Vector3.UP, Vector2(1.0, v1))
 		_vert(st, l1, Vector3.UP, Vector2(0.0, v1))

@@ -93,26 +93,90 @@ static func _project_to_segment_xz(p: Vector3, a: Vector3, b: Vector3) -> Vector
 # True if a segment from `start` to `end` would cross any existing segment
 # that is not the T-junction target. Sharing an endpoint with a segment is
 # fine (that is a normal connection).
-static func is_placement_valid(start: Vector3, end: Vector3, t_segment: Variant) -> bool:
-	if start.distance_to(end) < 1.0:
-		return false
-	var a2 := Vector2(start.x, start.z)
-	var b2 := Vector2(end.x, end.z)
-	for seg in RoadGraph.segments:
-		if seg.start_node == null or seg.end_node == null:
-			continue
-		if t_segment != null and seg == t_segment:
-			continue
-		var sa := seg.start_node.position
-		var sb := seg.end_node.position
-		# Ignore segments we touch at an endpoint
-		if _point_touches(sa, start, end) or _point_touches(sb, start, end):
-			continue
-		var hit_raw: Variant = _seg_intersect_2d(
-			a2, b2, Vector2(sa.x, sa.z), Vector2(sb.x, sb.z))
-		if hit_raw != null:
-			return false
-	return true
+#static func is_placement_valid(start: Vector3, end: Vector3, t_segments: Array) -> bool:
+	#if start.distance_to(end) < 1.0:
+		#return false
+	#var a2 := Vector2(start.x, start.z)
+	#var b2 := Vector2(end.x, end.z)
+	#for seg in RoadGraph.segments:
+		#if seg.start_node == null or seg.end_node == null:
+			#continue
+		#if seg in t_segments:
+			#continue
+		#var sa := seg.start_node.position
+		#var sb := seg.end_node.position
+		#if _point_touches(sa, start, end) or _point_touches(sb, start, end):
+			#continue
+		#var hit_raw: Variant = _seg_intersect_2d(
+			#a2, b2, Vector2(sa.x, sa.z), Vector2(sb.x, sb.z))
+		#if hit_raw != null:
+			#return false
+	#return true
 
 static func _point_touches(p: Vector3, a: Vector3, b: Vector3, eps: float = 0.5) -> bool:
 	return p.distance_to(a) < eps or p.distance_to(b) < eps
+
+# Nearest segment to a point within `radius`, with the projected point on its centerline.
+static func find_nearest_segment(pos: Vector3, radius: float) -> Variant:
+	var best: Variant = null
+	var best_dist := radius
+	for seg in RoadGraph.segments:
+		if seg.start_node == null or seg.end_node == null:
+			continue
+		if seg.road_type == null:
+			continue
+		var a := seg.start_node.position
+		var b := seg.end_node.position
+		if absf(a.y - pos.y) > 0.5 or absf(b.y - pos.y) > 0.5:
+			continue
+		var proj := _project_to_segment_xz(pos, a, b)
+		var d := Vector2(proj.x - pos.x, proj.z - pos.z).length()
+		if d < best_dist:
+			best_dist = d
+			best = { "segment": seg, "point": proj, "distance": d }
+	return best
+
+# Width-aware: rejects if the new segment's footprint overlaps any existing
+# segment's footprint, unless they share a node. `sharing_nodes` is an array
+# of RoadNode the new segment will touch (start and end).
+static func is_placement_valid(
+		start: Vector3, end: Vector3,
+		new_half_width: float,
+		t_segments: Array,
+		sharing_nodes: Array) -> bool:
+	if start.distance_to(end) < 1.0:
+		return false
+	var a0 := Vector2(start.x, start.z)
+	var a1 := Vector2(end.x, end.z)
+	for seg in RoadGraph.segments:
+		if seg.start_node == null or seg.end_node == null:
+			continue
+		if seg in t_segments:
+			continue
+		if seg.start_node in sharing_nodes or seg.end_node in sharing_nodes:
+			continue
+		var b_hw: float = seg.road_type.total_width() * 0.5
+		var sa := seg.start_node.position
+		var sb := seg.end_node.position
+		var d := _seg_seg_min_dist_2d(
+			a0, a1, Vector2(sa.x, sa.z), Vector2(sb.x, sb.z))
+		if d < new_half_width + b_hw - 0.01:
+			return false
+	return true
+
+static func _seg_seg_min_dist_2d(a0: Vector2, a1: Vector2, b0: Vector2, b1: Vector2) -> float:
+	if _seg_intersect_2d(a0, a1, b0, b1) != null:
+		return 0.0
+	var d1 := _point_seg_dist_2d(a0, b0, b1)
+	var d2 := _point_seg_dist_2d(a1, b0, b1)
+	var d3 := _point_seg_dist_2d(b0, a0, a1)
+	var d4 := _point_seg_dist_2d(b1, a0, a1)
+	return min(min(d1, d2), min(d3, d4))
+
+static func _point_seg_dist_2d(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len_sq := ab.length_squared()
+	if len_sq < 0.0001:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / len_sq, 0.0, 1.0)
+	return p.distance_to(a + ab * t)

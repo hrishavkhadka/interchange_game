@@ -45,7 +45,9 @@ func _rebuild() -> void:
 	_ensure_mesh_instance()
 	if road_type == null or curve == null:
 		return
-	var mesh := RoadMesh.build_slab(curve, road_type)
+	var L := curve.get_baked_length()
+	var inset: float = minf(RoadMesh.VISUAL_INSET, L / 3.0)
+	var mesh := RoadMesh.build_slab(curve, road_type, inset, inset)
 	_mesh_instance.mesh = mesh
 
 func _ensure_mesh_instance() -> void:

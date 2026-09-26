@@ -1,11 +1,8 @@
 class_name JunctionMesh
 extends RefCounted
 
-# 6 cm above the road surface; combined with the expanded hull this removes
-# junction flicker at all camera distances.
-const JUNCTION_LIFT: float = 0.08
-# i don't think deepseek knows for sure if this constant EXPAND is here.
-const EXPAND: float = 0.5
+const JUNCTION_LIFT: float = 0.03
+const EXPAND: float = 0.15
 
 static func build(node: RoadNode) -> ArrayMesh:
 	if node.segment_ends.size() < 2:
@@ -33,13 +30,18 @@ static func build(node: RoadNode) -> ArrayMesh:
 		dir = dir.normalized()
 		var perp := Vector3(-dir.z, 0.0, dir.x)
 
+		var seg_len := other_end.distance_to(node.position)
+		var inset: float = minf(RoadMesh.VISUAL_INSET, seg_len / 3.0)
+		var trimmed := node.position + dir * inset
+
 		points.append(node.position + perp * half_w)
 		points.append(node.position - perp * half_w)
+		points.append(trimmed + perp * half_w)
+		points.append(trimmed - perp * half_w)
 
 	if points.size() < 3:
 		return null
 
-	# Deduplicate within 1 cm
 	var unique: Array[Vector3] = []
 	for p in points:
 		var dup := false
@@ -62,9 +64,6 @@ static func build(node: RoadNode) -> ArrayMesh:
 		centroid += p
 	centroid /= float(hull.size())
 
-	# Expand the hull outward from its centroid so it overlaps the road
-	# ends instead of abutting them. This kills the seam flicker.
-	const EXPAND := 0.5
 	var expanded: Array[Vector3] = []
 	for p in hull:
 		var d := p - centroid
@@ -82,8 +81,8 @@ static func build(node: RoadNode) -> ArrayMesh:
 		var j := (i + 1) % hull.size()
 		var a: Vector3 = hull[i]
 		var b: Vector3 = hull[j]
-		a.y += RoadMesh.SURFACE_LIFT
-		b.y += RoadMesh.SURFACE_LIFT
+		a.y += JUNCTION_LIFT
+		b.y += JUNCTION_LIFT
 		_vert(st, centroid, Vector2(0.5, 0.5))
 		_vert(st, a, Vector2(0.0, 0.0))
 		_vert(st, b, Vector2(1.0, 0.0))
@@ -94,7 +93,6 @@ static func _vert(st: SurfaceTool, p: Vector3, uv: Vector2) -> void:
 	st.set_uv(uv)
 	st.add_vertex(p)
 
-# Andrew's monotone chain. Returns CCW hull in XZ.
 static func _convex_hull_xz(points: Array[Vector3]) -> Array[Vector3]:
 	var pts := points.duplicate()
 	pts.sort_custom(func(a: Vector3, b: Vector3) -> bool:

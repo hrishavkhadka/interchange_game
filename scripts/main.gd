@@ -6,6 +6,12 @@ func _ready() -> void:
 	_setup_ground()
 	var camera := _setup_camera()
 	var builder := _setup_builder(camera)
+	
+	var toolbar := SnapToolbar.new()
+	toolbar.name = "SnapToolbar"
+	toolbar.setup(builder.settings)
+	add_child(toolbar)
+	
 	var hud := _setup_hud()
 	builder.cost_changed.connect(hud.set_cost)
 
