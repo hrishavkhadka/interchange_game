@@ -1,0 +1,22 @@
+# Godot 4 editor cache
+.godot/
+
+# Build output
+build/
+export/
+*.exe
+*.pck
+
+# Import cache (Godot 3 legacy, harmless to keep)
+.import/
+
+# Export presets contain local paths
+export_presets.cfg
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
