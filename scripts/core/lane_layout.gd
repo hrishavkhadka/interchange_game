@@ -1,8 +1,7 @@
 class_name LaneLayout
 extends RefCounted
 
-# 'F' = forward, 'B' = backward
-# Order: left → right when facing forward.
+# 'F' = forward, 'B' = backward. Order: left to right when facing forward.
 
 var lanes: Array[String] = []
 
@@ -31,3 +30,4 @@ func backward_count() -> int:
 
 func as_string() -> String:
 	return "".join(lanes)
+#just commenting for test

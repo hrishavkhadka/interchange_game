@@ -3,7 +3,6 @@ extends RefCounted
 
 var id: int
 var position: Vector3
-# Each entry: { segment: RoadSegment, is_start: bool }
 var segment_ends: Array = []
 
 func _init(p_position: Vector3, p_id: int) -> void:

@@ -4,7 +4,7 @@ extends RefCounted
 const SAMPLES_PER_METER := 0.5
 const MIN_SAMPLES := 8
 const SURFACE_LIFT := 0.02
-const VISUAL_INSET := 1.5   # metres trimmed from each segment end at junctions
+const VISUAL_INSET := 1.5
 
 static func build_slab(curve: Curve3D, rt: RoadType, start_inset: float = 0.0, end_inset: float = 0.0) -> ArrayMesh:
 	var length := curve.get_baked_length()

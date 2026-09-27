@@ -21,10 +21,8 @@ func lane_count() -> int:
 func total_width() -> float:
 	return lane_count() * lane_width
 
-# Lateral offset of the LEFT edge of lane i (negative = left of centerline).
 func lane_left_offset(i: int) -> float:
 	return -total_width() * 0.5 + i * lane_width
 
-# Lateral offset of the CENTER of lane i.
 func lane_center_offset(i: int) -> float:
 	return lane_left_offset(i) + lane_width * 0.5

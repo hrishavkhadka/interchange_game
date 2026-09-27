@@ -3,12 +3,11 @@ extends Node3D
 
 var road_type: RoadType
 var curve: Curve3D
+var start_node: RoadNode
+var end_node: RoadNode
 
 var _mesh_instance: MeshInstance3D
 var _material: StandardMaterial3D
-
-var start_node: RoadNode
-var end_node: RoadNode
 
 func setup(rt: RoadType, c: Curve3D) -> void:
 	road_type = rt
@@ -38,8 +37,15 @@ func cost() -> float:
 	var lanes := road_type.lane_count()
 	var cfg := CostConfig.new()
 	var base := L * float(lanes) * cfg.lane_rate
-	# Phase 1: no height surcharges. Added in Phase 5.
 	return base
+
+func set_preview_validity(valid: bool) -> void:
+	if _material == null:
+		return
+	if valid:
+		_material.albedo_color = Color(0.22, 0.22, 0.25)
+	else:
+		_material.albedo_color = Color(0.68, 0.15, 0.15)
 
 func _rebuild() -> void:
 	_ensure_mesh_instance()
@@ -57,15 +63,7 @@ func _ensure_mesh_instance() -> void:
 	_material = StandardMaterial3D.new()
 	_material.albedo_color = Color(0.22, 0.22, 0.25)
 	_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
-	_material.cull_mode = BaseMaterial3D.CULL_DISABLED  # temporary: we'll fix winding later
+	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_material.roughness = 0.95
 	_mesh_instance.material_override = _material
 	add_child(_mesh_instance)
-
-func set_preview_validity(valid: bool) -> void:
-	if _material == null:
-		return
-	if valid:
-		_material.albedo_color = Color(0.22, 0.22, 0.25)
-	else:
-		_material.albedo_color = Color(0.68, 0.15, 0.15)

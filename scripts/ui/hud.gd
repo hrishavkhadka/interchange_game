@@ -7,7 +7,7 @@ var _hint_label: Label
 func _ready() -> void:
 	var panel := PanelContainer.new()
 	panel.position = Vector2(16, 16)
-	panel.custom_minimum_size = Vector2(220, 80)
+	panel.custom_minimum_size = Vector2(240, 110)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)

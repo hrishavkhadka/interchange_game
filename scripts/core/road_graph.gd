@@ -1,5 +1,4 @@
 extends Node
-# Autoload name: RoadGraph
 
 signal node_added(node: RoadNode)
 signal graph_changed()

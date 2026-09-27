@@ -6,24 +6,21 @@ func _ready() -> void:
 	_setup_ground()
 	var camera := _setup_camera()
 	var builder := _setup_builder(camera)
-	
-	var toolbar := SnapToolbar.new()
-	toolbar.name = "SnapToolbar"
-	toolbar.setup(builder.settings)
-	add_child(toolbar)
-	
 	var hud := _setup_hud()
 	builder.cost_changed.connect(hud.set_cost)
 
-	# New:
 	var visualizer := RoadGraphVisualizer.new()
 	visualizer.name = "RoadGraphVisualizer"
 	add_child(visualizer)
 
-	# New:
 	var junctions := JunctionRenderer.new()
 	junctions.name = "JunctionRenderer"
 	add_child(junctions)
+
+	var toolbar := SnapToolbar.new()
+	toolbar.name = "SnapToolbar"
+	toolbar.setup(builder.settings)
+	add_child(toolbar)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -48,7 +45,7 @@ func _setup_ground() -> void:
 	mesh.size = Vector2(300, 300)
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
-	mi.position = Vector3(0, -0.15, 0)      # ← ground sits 15 cm below roads
+	mi.position = Vector3(0, -0.15, 0)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.30, 0.34, 0.28)
 	mat.roughness = 1.0
@@ -79,7 +76,6 @@ func _setup_builder(_camera: OrbitCamera) -> RoadBuilder:
 	segments_root.name = "SegmentsRoot"
 	builder.add_child(segments_root)
 
-	# Build a default road type in code for Phase 1.
 	var rt := RoadType.new()
 	rt.id = "two_lane"
 	rt.display_name = "2-lane two-way"
