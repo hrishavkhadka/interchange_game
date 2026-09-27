@@ -19,16 +19,20 @@ func find_nearest(pos: Vector3, radius: float = SNAP_RADIUS) -> RoadNode:
 			best = n
 	return best
 
-func get_or_create(pos: Vector3) -> RoadNode:
+func get_or_create(pos: Vector3, is_waypoint: bool = false) -> RoadNode:
 	var existing := find_nearest(pos)
 	if existing != null:
 		return existing
 	var node := RoadNode.new(pos, _next_id)
+	node.is_waypoint = is_waypoint
 	_next_id += 1
 	nodes.append(node)
 	node_added.emit(node)
 	graph_changed.emit()
 	return node
+
+func get_or_create_waypoint(pos: Vector3) -> RoadNode:
+	return get_or_create(pos, true)
 
 func register_segment(seg: RoadSegment) -> void:
 	if not segments.has(seg):

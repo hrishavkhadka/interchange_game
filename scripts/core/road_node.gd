@@ -3,6 +3,7 @@ extends RefCounted
 
 var id: int
 var position: Vector3
+var is_waypoint: bool = false
 var segment_ends: Array = []
 
 func _init(p_position: Vector3, p_id: int) -> void:
