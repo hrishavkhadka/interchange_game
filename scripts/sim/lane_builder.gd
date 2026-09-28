@@ -7,6 +7,7 @@ static func build_lane_curve(segment_curve: Curve3D, rt: RoadType, lane_index: i
 		return null
 	var samples: int = maxi(8, int(total_length * 0.5))
 	var offset: float = rt.lane_right_offset(lane_index)
+	var delta: float = 0.2
 
 	var points: Array[Vector3] = []
 	points.resize(samples + 1)
@@ -14,16 +15,30 @@ static func build_lane_curve(segment_curve: Curve3D, rt: RoadType, lane_index: i
 		var t: float = float(i) / float(samples)
 		var along: float = t * total_length
 		var p: Vector3 = segment_curve.sample_baked(along)
-		var ahead: Vector3 = segment_curve.sample_baked(minf(along + 0.1, total_length))
-		var tangent: Vector3 = ahead - p
+
+		# Centered-difference tangent so endpoints are well defined.
+		var prev_along: float = maxf(along - delta, 0.0)
+		var next_along: float = minf(along + delta, total_length)
+		var prev_p: Vector3 = segment_curve.sample_baked(prev_along)
+		var next_p: Vector3 = segment_curve.sample_baked(next_along)
+
+		var tangent: Vector3 = next_p - prev_p
 		tangent.y = 0.0
+		if tangent.length_squared() < 0.0001:
+			tangent = next_p - p
+			tangent.y = 0.0
+		if tangent.length_squared() < 0.0001:
+			tangent = p - prev_p
+			tangent.y = 0.0
 		if tangent.length_squared() < 0.0001:
 			tangent = Vector3.FORWARD
 		tangent = tangent.normalized()
+
 		var right: Vector3 = tangent.cross(Vector3.UP)
 		if right.length_squared() < 0.0001:
 			right = Vector3.RIGHT
 		right = right.normalized()
+
 		points[i] = p + right * offset
 
 	if direction == "B":

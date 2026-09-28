@@ -2,11 +2,14 @@ class_name VehicleManager
 extends Node3D
 
 const SPAWN_INTERVAL: float = 2.0
+const RNG_SEED: int = 987654321
 
 var _timer: float = 0.0
 var _color_seed: int = 0
+var _rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
+	_rng.seed = RNG_SEED
 	LaneGraph.lanes_changed.connect(_on_lanes_changed)
 
 func _on_lanes_changed() -> void:
@@ -26,10 +29,13 @@ func _try_spawn() -> void:
 	if dead_ends.size() < 2:
 		return
 
-	var source: RoadNode = dead_ends[0]
-	var target: RoadNode = dead_ends[dead_ends.size() - 1]
-	if source == target:
-		return
+	var src_idx: int = _rng.randi_range(0, dead_ends.size() - 1)
+	var source: RoadNode = dead_ends[src_idx]
+
+	var tgt_idx: int = _rng.randi_range(0, dead_ends.size() - 2)
+	if tgt_idx >= src_idx:
+		tgt_idx += 1
+	var target: RoadNode = dead_ends[tgt_idx]
 
 	var source_lanes: Array[Lane] = LaneGraph.lanes_departing_from(source)
 	if source_lanes.is_empty():
