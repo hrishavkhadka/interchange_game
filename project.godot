@@ -18,6 +18,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 RoadGraph="*uid://0kp1norpbk46"
+LaneGraph="*uid://dci64qqh8ukn8"
 
 [debug]
 

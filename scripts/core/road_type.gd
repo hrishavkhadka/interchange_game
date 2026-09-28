@@ -21,8 +21,9 @@ func lane_count() -> int:
 func total_width() -> float:
 	return lane_count() * lane_width
 
-func lane_left_offset(i: int) -> float:
-	return -total_width() * 0.5 + i * lane_width
-
-func lane_center_offset(i: int) -> float:
-	return lane_left_offset(i) + lane_width * 0.5
+# Offset of the CENTER of lane `i` from the segment centerline, along the
+# RIGHT direction of the segment curve (forward tangent). For layout "FB"
+# with i=0, the offset is negative (the lane sits on the left side of the
+# centerline when facing forward).
+func lane_right_offset(i: int) -> float:
+	return -total_width() * 0.5 + lane_width * (float(i) + 0.5)

@@ -17,6 +17,14 @@ func _ready() -> void:
 	junctions.name = "JunctionRenderer"
 	add_child(junctions)
 
+	var lane_vis := LaneVisualizer.new()
+	lane_vis.name = "LaneVisualizer"
+	add_child(lane_vis)
+
+	var vehicles := VehicleManager.new()
+	vehicles.name = "VehicleManager"
+	add_child(vehicles)
+
 	var snap_toolbar := SnapToolbar.new()
 	snap_toolbar.name = "SnapToolbar"
 	snap_toolbar.setup(builder.settings)
