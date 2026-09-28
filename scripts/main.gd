@@ -22,6 +22,16 @@ func _ready() -> void:
 	toolbar.setup(builder.settings)
 	add_child(toolbar)
 
+	var main_toolbar := MainToolbar.new()
+	main_toolbar.name = "MainToolbar"
+	add_child(main_toolbar)
+	main_toolbar.mode_requested.connect(func(m: int) -> void:
+		builder.set_mode(m)
+		toolbar.visible = (m == 1))
+	# Apply initial mode visuals.
+	builder.set_mode(main_toolbar.get_mode())
+	toolbar.visible = (main_toolbar.get_mode() == 1)
+
 func _setup_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
