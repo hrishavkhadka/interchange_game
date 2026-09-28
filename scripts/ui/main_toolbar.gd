@@ -2,9 +2,11 @@ class_name MainToolbar
 extends CanvasLayer
 
 signal mode_requested(mode: int)
+signal snapping_toggled(on: bool)
 
 var _mode: int = 1
 var _buttons: Array[Button] = []
+var _snapping_button: Button
 
 func _ready() -> void:
 	layer = 3
@@ -15,7 +17,7 @@ func _ready() -> void:
 	panel.anchor_top = 1.0
 	panel.anchor_bottom = 1.0
 	panel.offset_left = 16
-	panel.offset_right = 216
+	panel.offset_right = 336
 	panel.offset_top = -64
 	panel.offset_bottom = -16
 	add_child(panel)
@@ -26,6 +28,19 @@ func _ready() -> void:
 
 	_add_mode_button(row, "Cursor", 0, "Pointer mode - inspect and select")
 	_add_mode_button(row, "Roads", 1, "Road building mode")
+
+	var sep := VSeparator.new()
+	row.add_child(sep)
+
+	_snapping_button = Button.new()
+	_snapping_button.text = "Snapping"
+	_snapping_button.toggle_mode = true
+	_snapping_button.tooltip_text = "Toggle the snapping options panel"
+	_snapping_button.custom_minimum_size = Vector2(90, 36)
+	_snapping_button.toggled.connect(func(on: bool) -> void:
+		snapping_toggled.emit(on))
+	row.add_child(_snapping_button)
+
 	_set_mode_visual(_mode)
 
 func get_mode() -> int:

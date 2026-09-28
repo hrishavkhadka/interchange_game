@@ -17,20 +17,24 @@ func _ready() -> void:
 	junctions.name = "JunctionRenderer"
 	add_child(junctions)
 
-	var toolbar := SnapToolbar.new()
-	toolbar.name = "SnapToolbar"
-	toolbar.setup(builder.settings)
-	add_child(toolbar)
+	var snap_toolbar := SnapToolbar.new()
+	snap_toolbar.name = "SnapToolbar"
+	snap_toolbar.setup(builder.settings)
+	add_child(snap_toolbar)
 
 	var main_toolbar := MainToolbar.new()
 	main_toolbar.name = "MainToolbar"
 	add_child(main_toolbar)
+
+	var snap_expanded: bool = false
 	main_toolbar.mode_requested.connect(func(m: int) -> void:
 		builder.set_mode(m)
-		toolbar.visible = (m == 1))
-	# Apply initial mode visuals.
+		snap_toolbar.set_expanded(snap_expanded and m == 1))
+	main_toolbar.snapping_toggled.connect(func(on: bool) -> void:
+		snap_expanded = on
+		snap_toolbar.set_expanded(on and main_toolbar.get_mode() == 1))
+
 	builder.set_mode(main_toolbar.get_mode())
-	toolbar.visible = (main_toolbar.get_mode() == 1)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
