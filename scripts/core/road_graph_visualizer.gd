@@ -34,8 +34,9 @@ func _rebuild() -> void:
 	for c in get_children():
 		c.queue_free()
 	for n in RoadGraph.nodes:
+		var render_as_waypoint: bool = n.is_waypoint and n.degree() <= 2
 		var mi := MeshInstance3D.new()
-		if n.is_waypoint:
+		if render_as_waypoint:
 			mi.mesh = _waypoint_sphere
 			mi.material_override = _waypoint_material
 			mi.position = n.position + Vector3(0.0, WAYPOINT_LIFT, 0.0)
