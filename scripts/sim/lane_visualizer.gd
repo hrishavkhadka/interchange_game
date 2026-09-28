@@ -2,7 +2,8 @@ class_name LaneVisualizer
 extends Node3D
 
 const LIFT: float = 0.10
-const SEGMENTS_PER_LANE: int = 20
+const LANE_SAMPLES: int = 20
+const TRANSITION_SAMPLES: int = 10
 
 var _visible: bool = false
 var _mesh: MeshInstance3D
@@ -36,13 +37,20 @@ func _rebuild() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_LINES)
 	for lane in LaneGraph.lanes:
-		var length: float = lane.length
-		var count: int = SEGMENTS_PER_LANE
-		var prev: Vector3 = lane.curve.sample_baked(0.0) + Vector3(0.0, LIFT, 0.0)
-		for i in range(1, count + 1):
-			var t: float = float(i) / float(count)
-			var p: Vector3 = lane.curve.sample_baked(t * length) + Vector3(0.0, LIFT, 0.0)
-			st.add_vertex(prev)
-			st.add_vertex(p)
-			prev = p
+		_draw_curve(st, lane.curve, lane.length, LANE_SAMPLES)
+		for departing in lane.next_curves:
+			var tc: Curve3D = lane.next_curves[departing]
+			if tc != null:
+				_draw_curve(st, tc, tc.get_baked_length(), TRANSITION_SAMPLES)
 	_mesh.mesh = st.commit()
+
+func _draw_curve(st: SurfaceTool, c: Curve3D, length: float, count: int) -> void:
+	if c == null or length < 0.05:
+		return
+	var prev: Vector3 = c.sample_baked(0.0) + Vector3(0.0, LIFT, 0.0)
+	for i in range(1, count + 1):
+		var t: float = float(i) / float(count)
+		var p: Vector3 = c.sample_baked(t * length) + Vector3(0.0, LIFT, 0.0)
+		st.add_vertex(prev)
+		st.add_vertex(p)
+		prev = p
