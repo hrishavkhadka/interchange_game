@@ -5,8 +5,6 @@ const DELTA: float = 0.2
 const MIN_ANGLE_DEG: float = 30.0
 const BASE_TRIM_FACTOR: float = 1.5
 
-# Trim factor as a function of the corner interior angle (radians).
-# Fits observed sweet spots: 30 -> 5, 45 -> 4, 60 -> 3, 90 -> 2.5.
 static func trim_factor_for_angle(interior_angle: float) -> float:
 	var a: float = interior_angle
 	var min_a: float = deg_to_rad(MIN_ANGLE_DEG)
@@ -16,10 +14,6 @@ static func trim_factor_for_angle(interior_angle: float) -> float:
 		a = PI - 0.001
 	return 1.0 / tan(a * 0.5) + BASE_TRIM_FACTOR
 
-# Build a lane curve for one lane of a segment, trimming `start_trim` metres
-# from the segment's start and `end_trim` from its end. The trims are the
-# same physical distance from the segment's midpoint regardless of whether
-# the lane is F or B.
 static func build_lane_curve(
 		segment_curve: Curve3D,
 		rt: RoadType,
@@ -31,7 +25,7 @@ static func build_lane_curve(
 	if total_length < 0.1:
 		return null
 
-	var max_trim: float = total_length * 0.4
+	var max_trim: float = total_length * 0.45
 	var trim_start: float = minf(start_trim, max_trim)
 	var trim_end: float = minf(end_trim, max_trim)
 	var usable: float = total_length - trim_start - trim_end

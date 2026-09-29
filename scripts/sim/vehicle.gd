@@ -68,22 +68,49 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 
 	_update_transform()
 
-# Splice a lateral move into the vehicle's path followed by `subsequent`.
-# Called when a lane change is decided.
-func begin_lane_change(target_lane: Lane, subsequent: Array[PathStep], cooldown_seconds: float) -> void:
-	var p_cur: float = distance_on_step
+# Splice a lateral S-curve followed by the pre-trimmed subsequent path.
+# `target_offset` is the distance along `target_lane` at which the S-curve
+# ends and `subsequent` begins.
+func begin_lane_change(
+		target_lane: Lane,
+		target_offset: float,
+		subsequent: Array[PathStep],
+		cooldown_seconds: float) -> void:
 	var c_cur: Curve3D = current_curve()
 	if c_cur == null:
 		return
-	var start_p: Vector3 = c_cur.sample_baked(p_cur)
+	var start_p: Vector3 = c_cur.sample_baked(distance_on_step)
+	var t_off: float = clampf(target_offset, 0.0, target_lane.length)
+	var end_p: Vector3 = target_lane.curve.sample_baked(t_off)
 
-	var frac: float = p_cur / maxf(current_step_length(), 0.001)
-	var p_tgt: float = frac * target_lane.length
-	var end_p: Vector3 = target_lane.curve.sample_baked(p_tgt)
+	var ahead_d: float = minf(distance_on_step + 2.0, current_step_length())
+	var ahead_p: Vector3 = c_cur.sample_baked(ahead_d)
+	var start_t: Vector3 = ahead_p - start_p
+	start_t.y = 0.0
+	if start_t.length_squared() < 0.001:
+		start_t = Vector3.FORWARD
+	start_t = start_t.normalized()
+
+	var t_ahead_d: float = minf(t_off + 2.0, target_lane.length)
+	var t_ahead_p: Vector3 = target_lane.curve.sample_baked(t_ahead_d)
+	var end_t: Vector3 = t_ahead_p - end_p
+	end_t.y = 0.0
+	if end_t.length_squared() < 0.001:
+		end_t = start_t
+	end_t = end_t.normalized()
+
+	var dist: float = start_p.distance_to(end_p)
+	var handle: float = maxf(dist / 3.0, 2.0)
+	var p1: Vector3 = start_p + start_t * handle
+	var p2: Vector3 = end_p - end_t * handle
 
 	var lat_curve := Curve3D.new()
-	lat_curve.add_point(start_p)
-	lat_curve.add_point(end_p)
+	var samples: int = 40
+	for i in range(samples + 1):
+		var t: float = float(i) / float(samples)
+		var p: Vector3 = _bezier3(start_p, p1, p2, end_p, t)
+		lat_curve.add_point(p)
+
 	var lat_step := PathStep.make(lat_curve, target_lane.speed_limit, false)
 
 	var new_path: Array[PathStep] = []
@@ -94,6 +121,10 @@ func begin_lane_change(target_lane: Lane, subsequent: Array[PathStep], cooldown_
 	path = new_path
 	distance_on_step = 0.0
 	cooldown = cooldown_seconds
+
+static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
+	var u: float = 1.0 - t
+	return u*u*u*p0 + 3.0*u*u*t*p1 + 3.0*u*t*t*p2 + t*t*t*p3
 
 func _update_transform() -> void:
 	var c := current_curve()
