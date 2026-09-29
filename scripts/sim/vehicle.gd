@@ -1,6 +1,9 @@
 class_name Vehicle
 extends Node3D
 
+const LATERAL_SAMPLES: int = 16
+const AVOID_SECONDS: float = 8.0
+
 var path: Array[PathStep] = []
 var step_index: int = 0
 var distance_on_step: float = 0.0
@@ -9,6 +12,15 @@ var target_node: RoadNode
 var length: float = 4.5
 var color_seed: int = 0
 var cooldown: float = 0.0
+var avoid_lane: Lane = null
+var avoid_timer: float = 0.0
+
+# While a lateral move is in progress, the vehicle's own curve is a private
+# spline that nobody else traverses. To make the changer visible to traffic
+# already on the target lane, we register it in the target lane's occupancy
+# list for the duration of the move.
+var lateral_target_lane: Lane = null
+var lateral_occupancy_dist: float = 0.0
 
 var _mesh: MeshInstance3D
 
@@ -55,6 +67,10 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	speed = v0
 	color_seed = seed_value
 	cooldown = 0.0
+	avoid_lane = null
+	avoid_timer = 0.0
+	lateral_target_lane = null
+	lateral_occupancy_dist = 0.0
 
 	_mesh = MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -68,9 +84,18 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 
 	_update_transform()
 
-# Splice a lateral S-curve followed by the pre-trimmed subsequent path.
-# `target_offset` is the distance along `target_lane` at which the S-curve
-# ends and `subsequent` begins.
+# Entries this vehicle occupies for other vehicles' leader lookups. Normally
+# one entry (its current curve). During a lateral move it also occupies the
+# target lane at the distance it will arrive at.
+func occupancy_entries() -> Array:
+	var result: Array = []
+	var c := current_curve()
+	if c != null:
+		result.append({ "curve": c, "dist": distance_on_step })
+	if lateral_target_lane != null:
+		result.append({ "curve": lateral_target_lane.curve, "dist": lateral_occupancy_dist })
+	return result
+
 func begin_lane_change(
 		target_lane: Lane,
 		target_offset: float,
@@ -79,6 +104,8 @@ func begin_lane_change(
 	var c_cur: Curve3D = current_curve()
 	if c_cur == null:
 		return
+	var old_lane: Lane = current_lane()
+
 	var start_p: Vector3 = c_cur.sample_baked(distance_on_step)
 	var t_off: float = clampf(target_offset, 0.0, target_lane.length)
 	var end_p: Vector3 = target_lane.curve.sample_baked(t_off)
@@ -99,15 +126,17 @@ func begin_lane_change(
 		end_t = start_t
 	end_t = end_t.normalized()
 
-	var dist: float = start_p.distance_to(end_p)
-	var handle: float = maxf(dist / 3.0, 2.0)
+	# Handle length equal to one third of the forward extent, at least 4 m.
+	# Because `target_offset` is chosen ahead of the parallel position, the
+	# curve naturally extends forward and looks like a real lane change.
+	var forward: float = end_p.distance_to(start_p)
+	var handle: float = maxf(forward / 3.0, 4.0)
 	var p1: Vector3 = start_p + start_t * handle
 	var p2: Vector3 = end_p - end_t * handle
 
 	var lat_curve := Curve3D.new()
-	var samples: int = 40
-	for i in range(samples + 1):
-		var t: float = float(i) / float(samples)
+	for i in range(LATERAL_SAMPLES + 1):
+		var t: float = float(i) / float(LATERAL_SAMPLES)
 		var p: Vector3 = _bezier3(start_p, p1, p2, end_p, t)
 		lat_curve.add_point(p)
 
@@ -121,6 +150,13 @@ func begin_lane_change(
 	path = new_path
 	distance_on_step = 0.0
 	cooldown = cooldown_seconds
+	if old_lane != null:
+		avoid_lane = old_lane
+		avoid_timer = AVOID_SECONDS
+
+	# Register in the target lane for the duration of the move.
+	lateral_target_lane = target_lane
+	lateral_occupancy_dist = t_off
 
 static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
 	var u: float = 1.0 - t
