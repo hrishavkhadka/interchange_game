@@ -9,16 +9,19 @@ func _ready() -> void:
 
 func _rebuild() -> void:
 	lanes.clear()
+	var trims := _compute_node_trims()
 
 	for seg in RoadGraph.segments:
 		if seg.road_type == null or seg.curve == null:
 			continue
 		if seg.start_node == null or seg.end_node == null:
 			continue
+		var start_trim: float = trims.get(seg.start_node.id, 0.0)
+		var end_trim: float = trims.get(seg.end_node.id, 0.0)
 		var layout := seg.road_type.layout()
 		for i in layout.size():
 			var dir: String = layout.lanes[i]
-			var lane := _make_lane(seg, i, dir)
+			var lane := _make_lane(seg, i, dir, start_trim, end_trim)
 			if lane != null:
 				lanes.append(lane)
 
@@ -26,8 +29,60 @@ func _rebuild() -> void:
 	_build_transitions()
 	lanes_changed.emit()
 
-func _make_lane(seg: RoadSegment, lane_index: int, direction: String) -> Lane:
-	var curve := LaneBuilder.build_lane_curve(seg.curve, seg.road_type, lane_index, direction)
+func _compute_node_trims() -> Dictionary:
+	var trims: Dictionary = {}
+	for node in RoadGraph.nodes:
+		var ends: Array = node.segment_ends
+		if ends.size() < 2:
+			trims[node.id] = 0.0
+			continue
+
+		var min_angle: float = PI
+		for i in ends.size():
+			for j in range(i + 1, ends.size()):
+				var e1: Dictionary = ends[i]
+				var e2: Dictionary = ends[j]
+				var s1: RoadSegment = e1["segment"]
+				var s2: RoadSegment = e2["segment"]
+				var d1: Vector3 = _outward_dir(s1, e1["is_start"], node)
+				var d2: Vector3 = _outward_dir(s2, e2["is_start"], node)
+				if d1.length_squared() < 0.01 or d2.length_squared() < 0.01:
+					continue
+				var ang: float = d1.angle_to(d2)
+				if ang < min_angle:
+					min_angle = ang
+
+		var factor: float = LaneBuilder.trim_factor_for_angle(min_angle)
+
+		# Base trim on the widest lane offset at this node (outer lane of the
+		# widest attached road). For a 2-lane road, this is lane_width/2.
+		var max_half_width: float = 0.0
+		for e in ends:
+			var s: RoadSegment = e["segment"]
+			if s.road_type == null:
+				continue
+			var hw: float = s.road_type.total_width() * 0.5
+			if hw > max_half_width:
+				max_half_width = hw
+		trims[node.id] = factor * max_half_width
+	return trims
+
+static func _outward_dir(seg: RoadSegment, is_start: bool, node: RoadNode) -> Vector3:
+	var other: RoadNode
+	if is_start:
+		other = seg.end_node
+	else:
+		other = seg.start_node
+	if other == null:
+		return Vector3.ZERO
+	var d: Vector3 = other.position - node.position
+	d.y = 0.0
+	if d.length_squared() < 0.01:
+		return Vector3.ZERO
+	return d.normalized()
+
+func _make_lane(seg: RoadSegment, lane_index: int, direction: String, start_trim: float, end_trim: float) -> Lane:
+	var curve := LaneBuilder.build_lane_curve(seg.curve, seg.road_type, lane_index, direction, start_trim, end_trim)
 	if curve == null:
 		return null
 	var lane := Lane.new()

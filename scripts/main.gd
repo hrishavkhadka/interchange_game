@@ -17,6 +17,10 @@ func _ready() -> void:
 	junctions.name = "JunctionRenderer"
 	add_child(junctions)
 
+	var transitions := TransitionMesh.new()
+	transitions.name = "TransitionMesh"
+	add_child(transitions)
+
 	var lane_vis := LaneVisualizer.new()
 	lane_vis.name = "LaneVisualizer"
 	add_child(lane_vis)

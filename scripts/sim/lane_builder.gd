@@ -2,25 +2,39 @@ class_name LaneBuilder
 extends RefCounted
 
 const DELTA: float = 0.2
-const TRIM_FACTOR: float = 5
+const MIN_ANGLE_DEG: float = 30.0
+const BASE_TRIM_FACTOR: float = 1.5
 
-# Trim each lane by `TRIM_FACTOR * lane_width` at each segment end. This is
-# enough that lane endpoints sit on the "near side" of the point where the
-# two lanes' centerlines would intersect at a junction, for every turn angle
-# up to about 150 degrees. If trim is too small, junction transition curves
-# loop back on themselves; if too large, short segments break.
-static func trim_distance(rt: RoadType) -> float:
-	return rt.lane_width * TRIM_FACTOR
+# Trim factor as a function of the corner interior angle (radians).
+# Fits observed sweet spots: 30 -> 5, 45 -> 4, 60 -> 3, 90 -> 2.5.
+static func trim_factor_for_angle(interior_angle: float) -> float:
+	var a: float = interior_angle
+	var min_a: float = deg_to_rad(MIN_ANGLE_DEG)
+	if a < min_a:
+		a = min_a
+	if a > PI - 0.001:
+		a = PI - 0.001
+	return 1.0 / tan(a * 0.5) + BASE_TRIM_FACTOR
 
-static func build_lane_curve(segment_curve: Curve3D, rt: RoadType, lane_index: int, direction: String) -> Curve3D:
+# Build a lane curve for one lane of a segment, trimming `start_trim` metres
+# from the segment's start and `end_trim` from its end. The trims are the
+# same physical distance from the segment's midpoint regardless of whether
+# the lane is F or B.
+static func build_lane_curve(
+		segment_curve: Curve3D,
+		rt: RoadType,
+		lane_index: int,
+		direction: String,
+		start_trim: float,
+		end_trim: float) -> Curve3D:
 	var total_length: float = segment_curve.get_baked_length()
 	if total_length < 0.1:
 		return null
-	var trim: float = trim_distance(rt)
+
 	var max_trim: float = total_length * 0.4
-	if trim > max_trim:
-		trim = max_trim
-	var usable: float = total_length - 2.0 * trim
+	var trim_start: float = minf(start_trim, max_trim)
+	var trim_end: float = minf(end_trim, max_trim)
+	var usable: float = total_length - trim_start - trim_end
 	if usable < 0.1:
 		return null
 
@@ -31,7 +45,7 @@ static func build_lane_curve(segment_curve: Curve3D, rt: RoadType, lane_index: i
 	points.resize(samples + 1)
 	for i in range(samples + 1):
 		var t: float = float(i) / float(samples)
-		var along: float = trim + t * usable
+		var along: float = trim_start + t * usable
 		var p: Vector3 = segment_curve.sample_baked(along)
 
 		var prev_along: float = maxf(along - DELTA, 0.0)
