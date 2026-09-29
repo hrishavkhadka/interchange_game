@@ -1,10 +1,11 @@
 class_name VehicleManager
 extends Node3D
 
-const SPAWN_INTERVAL: float = 2.0
-const SPAWN_CLEAR_DISTANCE: float = 20.0
+@export var spawn_interval: float = 0.6
+@export var spawn_clear_distance: float = 20.0
+@export var max_vehicles: int = 200
+
 const RNG_SEED: int = 987654321
-const MAX_VEHICLES: int = 200
 const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
 
 const IDM_A: float = 1.5
@@ -29,8 +30,9 @@ func _on_lanes_changed() -> void:
 	_vehicles.clear()
 
 func _process(delta: float) -> void:
+	_prune_dead()
 	_timer += delta
-	if _timer >= SPAWN_INTERVAL:
+	if _timer >= spawn_interval:
 		_timer = 0.0
 		_try_spawn()
 
@@ -53,6 +55,8 @@ func _prune_dead() -> void:
 func _build_occupancy() -> Dictionary:
 	var occ: Dictionary = {}
 	for v in _vehicles:
+		if not is_instance_valid(v):
+			continue
 		var c := v.current_curve()
 		if c == null:
 			continue
@@ -66,6 +70,8 @@ func _build_occupancy() -> Dictionary:
 	return occ
 
 func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float) -> void:
+	if not is_instance_valid(v):
+		return
 	var v0: float = v.desired_speed()
 	var leader: Variant = _find_leader(v, occ)
 
@@ -114,6 +120,8 @@ func _find_leader(v: Vehicle, occ: Dictionary) -> Variant:
 	var idx: int = _binary_search_gt(list, v.distance_on_step)
 	if idx < list.size():
 		var leader: Vehicle = list[idx]
+		if not is_instance_valid(leader):
+			return null
 		var center_gap: float = leader.distance_on_step - v.distance_on_step
 		var gap: float = center_gap - (v.length + leader.length) * 0.5
 		if gap < 0.0:
@@ -127,6 +135,8 @@ func _find_leader(v: Vehicle, occ: Dictionary) -> Variant:
 		var lst: Array = occ.get(step.curve, [])
 		if not lst.is_empty():
 			var leader2: Vehicle = lst[0]
+			if not is_instance_valid(leader2):
+				continue
 			var gap2: float = accum + leader2.distance_on_step - (v.length + leader2.length) * 0.5
 			if gap2 < 0.0:
 				gap2 = 0.0
@@ -163,7 +173,7 @@ func _idm(v: float, v0: float, gap: float, lead_speed: float) -> float:
 func _try_spawn() -> void:
 	if LaneGraph.lanes.is_empty():
 		return
-	if _vehicles.size() >= MAX_VEHICLES:
+	if _vehicles.size() >= max_vehicles:
 		return
 	var dead_ends := _dead_end_nodes()
 	if dead_ends.size() < 2:
@@ -202,9 +212,12 @@ func _try_spawn() -> void:
 
 func _start_lane_is_clear(lane: Lane) -> bool:
 	for v in _vehicles:
-		if v.current_curve() != lane.curve:
+		if not is_instance_valid(v):
 			continue
-		if v.distance_on_step < SPAWN_CLEAR_DISTANCE:
+		var c := v.current_curve()
+		if c != lane.curve:
+			continue
+		if v.distance_on_step < spawn_clear_distance:
 			return false
 	return true
 

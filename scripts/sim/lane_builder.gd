@@ -1,14 +1,25 @@
 class_name LaneBuilder
 extends RefCounted
 
-const LANE_TRIM: float = 1.5
 const DELTA: float = 0.2
+const TRIM_FACTOR: float = 5
+
+# Trim each lane by `TRIM_FACTOR * lane_width` at each segment end. This is
+# enough that lane endpoints sit on the "near side" of the point where the
+# two lanes' centerlines would intersect at a junction, for every turn angle
+# up to about 150 degrees. If trim is too small, junction transition curves
+# loop back on themselves; if too large, short segments break.
+static func trim_distance(rt: RoadType) -> float:
+	return rt.lane_width * TRIM_FACTOR
 
 static func build_lane_curve(segment_curve: Curve3D, rt: RoadType, lane_index: int, direction: String) -> Curve3D:
 	var total_length: float = segment_curve.get_baked_length()
 	if total_length < 0.1:
 		return null
-	var trim: float = minf(LANE_TRIM, total_length * 0.3)
+	var trim: float = trim_distance(rt)
+	var max_trim: float = total_length * 0.4
+	if trim > max_trim:
+		trim = max_trim
 	var usable: float = total_length - 2.0 * trim
 	if usable < 0.1:
 		return null

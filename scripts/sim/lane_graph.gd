@@ -84,16 +84,20 @@ static func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
 	var end_p: Vector3 = to_lane.curve.sample_baked(0.0)
 	var dist: float = start_p.distance_to(end_p)
 
-	if dist < 0.05:
-		return null
+	if dist < 0.1:
+		var straight := Curve3D.new()
+		straight.add_point(start_p)
+		straight.add_point(end_p)
+		return straight
 
 	var start_t: Vector3 = _end_tangent(from_lane.curve, from_lane.length)
 	var end_t: Vector3 = _start_tangent(to_lane.curve)
 
-	var p1: Vector3 = start_p + start_t * (dist / 3.0)
-	var p2: Vector3 = end_p - end_t * (dist / 3.0)
+	var handle_len: float = dist / 3.0
+	var p1: Vector3 = start_p + start_t * handle_len
+	var p2: Vector3 = end_p - end_t * handle_len
 
-	var samples: int = maxi(4, int(dist * 1.5))
+	var samples: int = maxi(6, int(dist * 1.5))
 	var curve := Curve3D.new()
 	for i in range(samples + 1):
 		var t: float = float(i) / float(samples)
