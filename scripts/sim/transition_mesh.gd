@@ -1,7 +1,7 @@
 class_name TransitionMesh
 extends Node3D
 
-const LIFT: float = 0.04
+const LIFT: float = 0.07
 const SAMPLES: int = 12
 
 var _mesh: MeshInstance3D

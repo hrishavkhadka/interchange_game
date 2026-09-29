@@ -1,7 +1,7 @@
 class_name JunctionMesh
 extends RefCounted
 
-const JUNCTION_LIFT: float = 0.03
+const JUNCTION_LIFT: float = 0.05
 const EXPAND: float = 0.15
 
 static func build(node: RoadNode) -> ArrayMesh:
