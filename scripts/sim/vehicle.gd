@@ -15,12 +15,14 @@ var cooldown: float = 0.0
 var avoid_lane: Lane = null
 var avoid_timer: float = 0.0
 
-# While a lateral move is in progress, the vehicle's own curve is a private
-# spline that nobody else traverses. To make the changer visible to traffic
-# already on the target lane, we register it in the target lane's occupancy
-# list for the duration of the move.
+# While a lateral move is in progress, the vehicle's curve is a private
+# Bézier. To make it visible to traffic on the target lane during the move,
+# it registers a second occupancy entry on `lateral_target_lane.curve` that
+# moves from `lateral_occupancy_start` to `lateral_occupancy_end` as the
+# Bézier progresses.
 var lateral_target_lane: Lane = null
-var lateral_occupancy_dist: float = 0.0
+var lateral_occupancy_start: float = 0.0
+var lateral_occupancy_end: float = 0.0
 
 var _mesh: MeshInstance3D
 
@@ -63,14 +65,15 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	path = steps
 	target_node = t
 	step_index = 0
-	distance_on_step = 0.0
+	distance_on_step = path[0].start_dist
 	speed = v0
 	color_seed = seed_value
 	cooldown = 0.0
 	avoid_lane = null
 	avoid_timer = 0.0
 	lateral_target_lane = null
-	lateral_occupancy_dist = 0.0
+	lateral_occupancy_start = 0.0
+	lateral_occupancy_end = 0.0
 
 	_mesh = MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -85,19 +88,30 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	_update_transform()
 
 # Entries this vehicle occupies for other vehicles' leader lookups. Normally
-# one entry (its current curve). During a lateral move it also occupies the
-# target lane at the distance it will arrive at.
+# one entry. During a lateral move, a second entry tracks the vehicle's
+# projected position on the target lane, interpolated from the parallel
+# position to the landing position as the Bézier progresses.
 func occupancy_entries() -> Array:
 	var result: Array = []
 	var c := current_curve()
 	if c != null:
 		result.append({ "curve": c, "dist": distance_on_step })
 	if lateral_target_lane != null:
-		result.append({ "curve": lateral_target_lane.curve, "dist": lateral_occupancy_dist })
+		var f: float = 0.0
+		var L: float = current_step_length()
+		if L > 0.01:
+			f = clampf(distance_on_step / L, 0.0, 1.0)
+		var d: float = lateral_occupancy_start + f * (lateral_occupancy_end - lateral_occupancy_start)
+		result.append({ "curve": lateral_target_lane.curve, "dist": d })
 	return result
 
+# `p_par` is the vehicle's projection onto the target lane before the move.
+# `target_offset` is where it lands. The lateral Bézier goes from the
+# vehicle's world position to the target lane's world position at
+# `target_offset`.
 func begin_lane_change(
 		target_lane: Lane,
+		p_par: float,
 		target_offset: float,
 		subsequent: Array[PathStep],
 		cooldown_seconds: float) -> void:
@@ -126,11 +140,8 @@ func begin_lane_change(
 		end_t = start_t
 	end_t = end_t.normalized()
 
-	# Handle length equal to one third of the forward extent, at least 4 m.
-	# Because `target_offset` is chosen ahead of the parallel position, the
-	# curve naturally extends forward and looks like a real lane change.
-	var forward: float = end_p.distance_to(start_p)
-	var handle: float = maxf(forward / 3.0, 4.0)
+	var dist: float = start_p.distance_to(end_p)
+	var handle: float = maxf(dist / 3.0, 2.0)
 	var p1: Vector3 = start_p + start_t * handle
 	var p2: Vector3 = end_p - end_t * handle
 
@@ -154,9 +165,9 @@ func begin_lane_change(
 		avoid_lane = old_lane
 		avoid_timer = AVOID_SECONDS
 
-	# Register in the target lane for the duration of the move.
 	lateral_target_lane = target_lane
-	lateral_occupancy_dist = t_off
+	lateral_occupancy_start = p_par
+	lateral_occupancy_end = t_off
 
 static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
 	var u: float = 1.0 - t
@@ -176,3 +187,8 @@ func _update_transform() -> void:
 	dir.y = 0.0
 	if dir.length_squared() > 0.0001:
 		look_at(global_position + dir.normalized(), Vector3.UP)
+		
+func current_step_is_lane() -> bool:
+	if path.is_empty() or step_index >= path.size():
+		return false
+	return path[step_index].is_lane

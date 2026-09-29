@@ -2,6 +2,15 @@ extends Node
 
 signal lanes_changed
 
+# Curve3D -> Array[Lane]. Given a transition curve, which lanes does it
+# come from? Used by the runtime yield check.
+var transition_source_lane: Dictionary = {}
+
+# IncomingLane -> Array[IncomingLane]. Lanes that arrive at the same node
+# and whose transitions can physically overlap. A vehicle approaching a
+# node yields to any conflicting lane that already has a vehicle inside.
+var conflicting_lanes: Dictionary = {}
+
 var lanes: Array[Lane] = []
 
 func _ready() -> void:
@@ -9,6 +18,8 @@ func _ready() -> void:
 
 func _rebuild() -> void:
 	lanes.clear()
+	transition_source_lane.clear()
+	conflicting_lanes.clear()
 	var trims := _compute_node_trims()
 
 	for seg in RoadGraph.segments:
@@ -27,7 +38,9 @@ func _rebuild() -> void:
 
 	_build_connections()
 	_build_transitions()
+	_build_transition_index()
 	_build_adjacency()
+	_build_conflicts()
 	lanes_changed.emit()
 
 func _compute_node_trims() -> Dictionary:
@@ -37,7 +50,6 @@ func _compute_node_trims() -> Dictionary:
 		if ends.size() < 2:
 			trims[node.id] = 0.0
 			continue
-
 		var min_angle: float = PI
 		for i in ends.size():
 			for j in range(i + 1, ends.size()):
@@ -52,9 +64,7 @@ func _compute_node_trims() -> Dictionary:
 				var ang: float = d1.angle_to(d2)
 				if ang < min_angle:
 					min_angle = ang
-
 		var factor: float = LaneBuilder.trim_factor_for_angle(min_angle)
-
 		var max_half_width: float = 0.0
 		for e in ends:
 			var s: RoadSegment = e["segment"]
@@ -133,33 +143,16 @@ func _build_transitions() -> void:
 			if c != null:
 				arriving.next_curves[departing] = c
 
-func _build_adjacency() -> void:
-	for lane in lanes:
-		lane.adjacent_lanes.clear()
-	var by_segment: Dictionary = {}
-	for lane in lanes:
-		var key: int = lane.segment.get_instance_id()
-		if not by_segment.has(key):
-			by_segment[key] = []
-		by_segment[key].append(lane)
-	for key in by_segment:
-		var group: Array = by_segment[key]
-		for i in group.size():
-			for j in range(i + 1, group.size()):
-				var a: Lane = group[i]
-				var b: Lane = group[j]
-				if a.direction != b.direction:
-					continue
-				if absi(a.lane_index - b.lane_index) != 1:
-					continue
-				a.adjacent_lanes.append(b)
-				b.adjacent_lanes.append(a)
+func _build_transition_index() -> void:
+	for arriving in lanes:
+		for departing in arriving.next_curves:
+			var c: Curve3D = arriving.next_curves[departing]
+			transition_source_lane[c] = arriving
 
-static func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
+func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
 	var start_p: Vector3 = from_lane.curve.sample_baked(from_lane.length)
 	var end_p: Vector3 = to_lane.curve.sample_baked(0.0)
 	var dist: float = start_p.distance_to(end_p)
-
 	if dist < 0.1:
 		var straight := Curve3D.new()
 		straight.add_point(start_p)
@@ -168,17 +161,14 @@ static func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
 
 	var start_t: Vector3 = _end_tangent(from_lane.curve, from_lane.length)
 	var end_t: Vector3 = _start_tangent(to_lane.curve)
-
 	var handle_len: float = dist / 3.0
 	var p1: Vector3 = start_p + start_t * handle_len
 	var p2: Vector3 = end_p - end_t * handle_len
-
 	var samples: int = maxi(6, int(dist * 1.5))
 	var curve := Curve3D.new()
 	for i in range(samples + 1):
 		var t: float = float(i) / float(samples)
-		var p: Vector3 = _bezier3(start_p, p1, p2, end_p, t)
-		curve.add_point(p)
+		curve.add_point(_bezier3(start_p, p1, p2, end_p, t))
 	return curve
 
 static func _end_tangent(c: Curve3D, length: float) -> Vector3:
@@ -203,6 +193,87 @@ static func _start_tangent(c: Curve3D) -> Vector3:
 static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
 	var u: float = 1.0 - t
 	return u*u*u*p0 + 3.0*u*u*t*p1 + 3.0*u*t*t*p2 + t*t*t*p3
+
+func _build_adjacency() -> void:
+	for lane in lanes:
+		lane.adjacent_lanes.clear()
+	var by_segment: Dictionary = {}
+	for lane in lanes:
+		var key: int = lane.segment.get_instance_id()
+		if not by_segment.has(key):
+			by_segment[key] = []
+		by_segment[key].append(lane)
+	for key in by_segment:
+		var group: Array = by_segment[key]
+		for i in group.size():
+			for j in range(i + 1, group.size()):
+				var a: Lane = group[i]
+				var b: Lane = group[j]
+				if a.direction != b.direction:
+					continue
+				if absi(a.lane_index - b.lane_index) != 1:
+					continue
+				a.adjacent_lanes.append(b)
+				b.adjacent_lanes.append(a)
+
+const CONFLICT_DIST: float = 2.5
+const CONFLICT_SAMPLES: int = 12
+
+func _build_conflicts() -> void:
+	# Group incoming lanes by their node.
+	var by_node: Dictionary = {}
+	for lane in lanes:
+		if lane.to_node == null:
+			continue
+		var key: int = lane.to_node.id
+		if not by_node.has(key):
+			by_node[key] = []
+		by_node[key].append(lane)
+
+	for key in by_node:
+		var incoming: Array = by_node[key]
+		for i in incoming.size():
+			var la: Lane = incoming[i]
+			if not conflicting_lanes.has(la):
+				conflicting_lanes[la] = []
+			for j in range(i + 1, incoming.size()):
+				var lb: Lane = incoming[j]
+				if _lanes_conflict(la, lb):
+					conflicting_lanes[la].append(lb)
+					if not conflicting_lanes.has(lb):
+						conflicting_lanes[lb] = []
+					conflicting_lanes[lb].append(la)
+
+static func _lanes_conflict(a: Lane, b: Lane) -> bool:
+	var curves_a: Array = []
+	for departing in a.next_curves:
+		curves_a.append(a.next_curves[departing])
+	var curves_b: Array = []
+	for departing in b.next_curves:
+		curves_b.append(b.next_curves[departing])
+	for ca in curves_a:
+		for cb in curves_b:
+			if _curves_conflict(ca, cb):
+				return true
+	return false
+
+static func _curves_conflict(ca: Curve3D, cb: Curve3D) -> bool:
+	var la: float = ca.get_baked_length()
+	var lb: float = cb.get_baked_length()
+	if la < 0.1 or lb < 0.1:
+		return false
+	var pts_a: Array[Vector3] = []
+	for i in range(CONFLICT_SAMPLES + 1):
+		var t: float = float(i) / float(CONFLICT_SAMPLES)
+		pts_a.append(ca.sample_baked(t * la))
+	for i in range(CONFLICT_SAMPLES + 1):
+		var t: float = float(i) / float(CONFLICT_SAMPLES)
+		var p: Vector3 = cb.sample_baked(t * lb)
+		for q in pts_a:
+			var d: float = Vector2(p.x - q.x, p.z - q.z).length()
+			if d < CONFLICT_DIST:
+				return true
+	return false
 
 func lanes_departing_from(node: RoadNode) -> Array[Lane]:
 	var result: Array[Lane] = []
