@@ -1,13 +1,19 @@
 extends Node3D
 
+var _builder: RoadBuilder
+
 func _ready() -> void:
 	_setup_environment()
 	_setup_light()
 	_setup_ground()
 	var camera := _setup_camera()
-	var builder := _setup_builder(camera)
+	_builder = _setup_builder(camera)
 	var hud := _setup_hud()
-	builder.cost_changed.connect(hud.set_cost)
+	_builder.cost_changed.connect(hud.set_cost)
+	_builder.road_type_changed.connect(func(_idx: int, name: String) -> void:
+		hud.set_road_type(name))
+	_builder.set_road_type_index(0)
+	hud.set_road_type("2-lane two-way")
 
 	var visualizer := RoadGraphVisualizer.new()
 	visualizer.name = "RoadGraphVisualizer"
@@ -31,7 +37,7 @@ func _ready() -> void:
 
 	var snap_toolbar := SnapToolbar.new()
 	snap_toolbar.name = "SnapToolbar"
-	snap_toolbar.setup(builder.settings)
+	snap_toolbar.setup(_builder.settings)
 	add_child(snap_toolbar)
 
 	var main_toolbar := MainToolbar.new()
@@ -40,13 +46,24 @@ func _ready() -> void:
 
 	var snap_expanded: bool = false
 	main_toolbar.mode_requested.connect(func(m: int) -> void:
-		builder.set_mode(m)
+		_builder.set_mode(m)
 		snap_toolbar.set_expanded(snap_expanded and m == 1))
 	main_toolbar.snapping_toggled.connect(func(on: bool) -> void:
 		snap_expanded = on
 		snap_toolbar.set_expanded(on and main_toolbar.get_mode() == 1))
 
-	builder.set_mode(main_toolbar.get_mode())
+	_builder.set_mode(main_toolbar.get_mode())
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey:
+		var ke := event as InputEventKey
+		if not ke.pressed or ke.echo:
+			return
+		match ke.keycode:
+			KEY_1: _builder.set_road_type_index(0)
+			KEY_2: _builder.set_road_type_index(1)
+			KEY_3: _builder.set_road_type_index(2)
+			KEY_4: _builder.set_road_type_index(3)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -101,14 +118,6 @@ func _setup_builder(_camera: OrbitCamera) -> RoadBuilder:
 	var segments_root := Node3D.new()
 	segments_root.name = "SegmentsRoot"
 	builder.add_child(segments_root)
-
-	var rt := RoadType.new()
-	rt.id = "two_lane"
-	rt.display_name = "2-lane two-way"
-	rt.lane_layout_string = "FB"
-	rt.lane_width = 3.2
-	rt.speed_limit_kmh = 50.0
-	builder.road_type = rt
 
 	add_child(builder)
 	return builder

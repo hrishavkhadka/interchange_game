@@ -8,6 +8,7 @@ var speed: float = 0.0
 var target_node: RoadNode
 var length: float = 4.5
 var color_seed: int = 0
+var cooldown: float = 0.0
 
 var _mesh: MeshInstance3D
 
@@ -20,6 +21,14 @@ func current_step_length() -> float:
 	if path.is_empty() or step_index >= path.size():
 		return 0.0
 	return path[step_index].length
+
+func current_lane() -> Lane:
+	if path.is_empty() or step_index >= path.size():
+		return null
+	var s: PathStep = path[step_index]
+	if not s.is_lane:
+		return null
+	return s.lane_ref
 
 func desired_speed() -> float:
 	if path.is_empty() or step_index >= path.size():
@@ -45,6 +54,7 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	distance_on_step = 0.0
 	speed = v0
 	color_seed = seed_value
+	cooldown = 0.0
 
 	_mesh = MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -57,6 +67,33 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	add_child(_mesh)
 
 	_update_transform()
+
+# Splice a lateral move into the vehicle's path followed by `subsequent`.
+# Called when a lane change is decided.
+func begin_lane_change(target_lane: Lane, subsequent: Array[PathStep], cooldown_seconds: float) -> void:
+	var p_cur: float = distance_on_step
+	var c_cur: Curve3D = current_curve()
+	if c_cur == null:
+		return
+	var start_p: Vector3 = c_cur.sample_baked(p_cur)
+
+	var frac: float = p_cur / maxf(current_step_length(), 0.001)
+	var p_tgt: float = frac * target_lane.length
+	var end_p: Vector3 = target_lane.curve.sample_baked(p_tgt)
+
+	var lat_curve := Curve3D.new()
+	lat_curve.add_point(start_p)
+	lat_curve.add_point(end_p)
+	var lat_step := PathStep.make(lat_curve, target_lane.speed_limit, false)
+
+	var new_path: Array[PathStep] = []
+	for i in range(step_index):
+		new_path.append(path[i])
+	new_path.append(lat_step)
+	new_path.append_array(subsequent)
+	path = new_path
+	distance_on_step = 0.0
+	cooldown = cooldown_seconds
 
 func _update_transform() -> void:
 	var c := current_curve()

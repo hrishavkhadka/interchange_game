@@ -27,6 +27,7 @@ func _rebuild() -> void:
 
 	_build_connections()
 	_build_transitions()
+	_build_adjacency()
 	lanes_changed.emit()
 
 func _compute_node_trims() -> Dictionary:
@@ -54,8 +55,6 @@ func _compute_node_trims() -> Dictionary:
 
 		var factor: float = LaneBuilder.trim_factor_for_angle(min_angle)
 
-		# Base trim on the widest lane offset at this node (outer lane of the
-		# widest attached road). For a 2-lane road, this is lane_width/2.
 		var max_half_width: float = 0.0
 		for e in ends:
 			var s: RoadSegment = e["segment"]
@@ -133,6 +132,28 @@ func _build_transitions() -> void:
 			var c := _make_transition(arriving, departing)
 			if c != null:
 				arriving.next_curves[departing] = c
+
+func _build_adjacency() -> void:
+	for lane in lanes:
+		lane.adjacent_lanes.clear()
+	var by_segment: Dictionary = {}
+	for lane in lanes:
+		var key: int = lane.segment.get_instance_id()
+		if not by_segment.has(key):
+			by_segment[key] = []
+		by_segment[key].append(lane)
+	for key in by_segment:
+		var group: Array = by_segment[key]
+		for i in group.size():
+			for j in range(i + 1, group.size()):
+				var a: Lane = group[i]
+				var b: Lane = group[j]
+				if a.direction != b.direction:
+					continue
+				if absi(a.lane_index - b.lane_index) != 1:
+					continue
+				a.adjacent_lanes.append(b)
+				b.adjacent_lanes.append(a)
 
 static func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
 	var start_p: Vector3 = from_lane.curve.sample_baked(from_lane.length)

@@ -1,7 +1,7 @@
 class_name VehicleManager
 extends Node3D
 
-@export var spawn_interval: float = 0.6
+@export var spawn_interval: float = 0.1
 @export var spawn_clear_distance: float = 20.0
 @export var max_vehicles: int = 200
 
@@ -14,6 +14,10 @@ const IDM_S0: float = 2.0
 const IDM_T: float = 1.2
 const IDM_DELTA: float = 4.0
 const IDM_MIN_ACCEL: float = -8.0
+
+const LC_COOLDOWN: float = 5.0
+const LC_HYSTERESIS: float = 1.15
+const LC_SAFE_FACTOR: float = 1.2
 
 var _timer: float = 0.0
 var _color_seed: int = 0
@@ -72,6 +76,11 @@ func _build_occupancy() -> Dictionary:
 func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float) -> void:
 	if not is_instance_valid(v):
 		return
+
+	v.cooldown = maxf(0.0, v.cooldown - delta)
+	if v.cooldown <= 0.0 and v.current_lane() != null:
+		_maybe_lane_change(v, occ)
+
 	var v0: float = v.desired_speed()
 	var leader: Variant = _find_leader(v, occ)
 
@@ -110,6 +119,73 @@ func _advance(v: Vehicle, move: float) -> void:
 			if v.step_index >= v.path.size():
 				v.queue_free()
 				return
+
+# ------------------------------------------------------------------ MOBIL
+
+func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
+	var current: Lane = v.current_lane()
+	if current == null:
+		return
+	if current.adjacent_lanes.is_empty():
+		return
+
+	var cur_speed: float = _lane_speed_at(current, v.distance_on_step, occ)
+	var min_acceptable: float = cur_speed * LC_HYSTERESIS
+
+	var best: Lane = null
+	var best_speed: float = min_acceptable
+
+	for adj in current.adjacent_lanes:
+		var adj_speed: float = _lane_speed_at(adj, _parallel_distance(v, adj), occ)
+		if adj_speed <= best_speed:
+			continue
+		if not _lane_change_safe(v, adj, occ):
+			continue
+		best = adj
+		best_speed = adj_speed
+
+	if best != null:
+		_execute_lane_change(v, best)
+
+func _lane_speed_at(lane: Lane, dist: float, occ: Dictionary) -> float:
+	var lst: Array = occ.get(lane.curve, [])
+	for o in lst:
+		if not is_instance_valid(o):
+			continue
+		var ov: Vehicle = o
+		if ov.distance_on_step > dist:
+			return ov.speed
+	return lane.speed_limit
+
+func _parallel_distance(v: Vehicle, target: Lane) -> float:
+	var frac: float = v.distance_on_step / maxf(v.current_step_length(), 0.001)
+	return frac * target.length
+
+func _lane_change_safe(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
+	var safe_gap: float = IDM_S0 + v.speed * LC_SAFE_FACTOR
+	var p_tgt: float = _parallel_distance(v, target)
+	var lst: Array = occ.get(target.curve, [])
+	for o in lst:
+		if not is_instance_valid(o):
+			continue
+		var ov: Vehicle = o
+		var d: float = ov.distance_on_step - p_tgt
+		if d > 0.0 and d < safe_gap:
+			return false
+		if d < 0.0 and -d < safe_gap:
+			return false
+	return true
+
+func _execute_lane_change(v: Vehicle, target_lane: Lane) -> void:
+	var new_route: Array[Lane] = LanePathfinder.find_path(target_lane, v.target_node)
+	if new_route.is_empty():
+		return
+	var new_steps: Array[PathStep] = _build_steps(new_route)
+	if new_steps.is_empty():
+		return
+	v.begin_lane_change(target_lane, new_steps, LC_COOLDOWN)
+
+# ------------------------------------------------------------------ helpers
 
 func _find_leader(v: Vehicle, occ: Dictionary) -> Variant:
 	var c := v.current_curve()
@@ -225,7 +301,7 @@ func _build_steps(lanes: Array[Lane]) -> Array[PathStep]:
 	var steps: Array[PathStep] = []
 	for i in range(lanes.size()):
 		var lane: Lane = lanes[i]
-		steps.append(PathStep.make(lane.curve, lane.speed_limit, true))
+		steps.append(PathStep.make(lane.curve, lane.speed_limit, true, lane))
 		if i + 1 < lanes.size():
 			var nxt: Lane = lanes[i + 1]
 			if lane.next_curves.has(nxt):

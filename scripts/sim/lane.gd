@@ -11,6 +11,5 @@ var to_node: RoadNode
 var speed_limit: float
 var next_lanes: Array[Lane] = []
 var prev_lanes: Array[Lane] = []
-# Transition curve from this lane to a given next lane, keyed by the
-# next lane instance. Built by LaneGraph after connections are made.
 var next_curves: Dictionary = {}
+var adjacent_lanes: Array[Lane] = []
