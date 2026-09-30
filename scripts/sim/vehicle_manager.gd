@@ -8,22 +8,23 @@ extends Node3D
 const RNG_SEED: int = 987654321
 const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
 
-const IDM_A: float = 2.5
-const IDM_B: float = 1.0
+const IDM_A: float = 2.0
+const IDM_B: float = 2.5
 const IDM_S0: float = 2.0
-const IDM_T: float = 1.0
+const IDM_T: float = 1.2
 const IDM_DELTA: float = 4.0
-const IDM_MIN_ACCEL: float = -12.0
+const IDM_MIN_ACCEL: float = -8.0
 
 const MOBIL_POLITENESS: float = 0.5
 const MOBIL_THRESHOLD: float = 1.7
 const B_SAFE: float = 2.0
-const MOBIL_TICK_INTERVAL: int = 1
+const MOBIL_TICK_INTERVAL: int = 3
 const MIN_LANE_CHANGE_ROOM: float = 12.0
 const LC_COOLDOWN: float = 5.0
 const JUNCTION_ARRIVAL_COOLDOWN: float = 1.2
-const SAFETY_GAP_FACTOR: float = 1.0
-const REACTION_TIME: float = 1.0
+const SAFETY_GAP_FACTOR: float = 1.3
+const REACTION_TIME: float = 1.5
+const TARGET_LEADER_MIN_SPEED: float = 3.0
 
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
@@ -31,8 +32,8 @@ const LC_FORWARD_TIME: float = 1.0
 const YIELD_DIST: float = 25.0
 const YIELD_OFFSET: float = 0.5
 const YIELD_TIMEOUT: float = 4.0
-const YIELD_TIMEOUT_JITTER: float = 2.5
 const YIELD_INSIDE_SPEED: float = 0.5
+const YIELD_COMMIT_DIST: float = 5.0
 
 var _timer: float = 0.0
 var _tick_counter: int = 0
@@ -127,8 +128,6 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 	var yield_gap: float = _junction_yield_gap(v)
 	if yield_gap >= 0.0:
 		v.yield_timer += delta
-		# Per-vehicle jitter so vehicles on different approaches do not time
-		# out on the same tick and pile into the junction together.
 		var jitter: float = float(v.color_seed % 5) * 0.5
 		if v.yield_timer > YIELD_TIMEOUT + jitter:
 			yield_gap = -1.0
@@ -182,20 +181,31 @@ func _junction_yield_gap(v: Vehicle) -> float:
 		gap_to_line = 0.0
 	return gap_to_line
 
+# A conflicting vehicle blocks the junction from the moment it is close
+# enough to commit to its transition. This closes the race where two
+# vehicles from different approaches both see the junction empty.
 func _lane_has_vehicle_inside(lane: Lane) -> bool:
 	for v in _vehicles:
 		if not is_instance_valid(v):
 			continue
-		if v.step_index < 1 or v.step_index >= v.path.size():
-			continue
-		var step: PathStep = v.path[v.step_index]
-		if not step.is_transition:
-			continue
 		if v.speed < YIELD_INSIDE_SPEED:
 			continue
-		var prev_step: PathStep = v.path[v.step_index - 1]
-		if prev_step.lane_ref == lane:
-			return true
+		if v.step_index >= v.path.size():
+			continue
+		var step: PathStep = v.path[v.step_index]
+		# Case 1: on a transition whose source lane is `lane`.
+		if step.is_transition and v.step_index >= 1:
+			var prev_step: PathStep = v.path[v.step_index - 1]
+			if prev_step.lane_ref == lane:
+				return true
+		# Case 2: on `lane`, within commit distance of its transition.
+		if step.is_lane and step.lane_ref == lane:
+			if v.step_index + 1 < v.path.size():
+				var nxt: PathStep = v.path[v.step_index + 1]
+				if nxt.is_transition:
+					var remaining: float = step.length - v.distance_on_step
+					if remaining <= YIELD_COMMIT_DIST:
+						return true
 	return false
 
 func _advance(v: Vehicle, move: float) -> void:
@@ -253,12 +263,15 @@ func _mobil_ok(v: Vehicle, target: Lane, p_par: float, target_off: float, occ: D
 	var delta: float = target_off - p_par
 	var t_move: float = delta / maxf(target.speed_limit, 1.0)
 
-	# Leader check at the LANDING position, with the minimum over the whole
-	# lateral move. See derivation: min_gap = lgap + min(delta, lv.speed*t).
 	var tgt_lead: Variant = _leader_on_lane_at(target, target_off, occ)
+	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
+
 	if tgt_lead != null:
 		var li: Dictionary = tgt_lead
 		var lv: Vehicle = li["vehicle"]
+		# Immediate leader is nearly stopped: target lane is congested.
+		if lv.speed < TARGET_LEADER_MIN_SPEED:
+			return false
 		var lgap: float = li["gap"]
 		var lgap_min: float = lgap + minf(delta, lv.speed * t_move)
 		var min_lead_gap: float = IDM_S0 + v.speed * IDM_T * SAFETY_GAP_FACTOR + v.speed * REACTION_TIME
@@ -268,10 +281,7 @@ func _mobil_ok(v: Vehicle, target: Lane, p_par: float, target_off: float, occ: D
 		if a_L_new < -B_SAFE:
 			return false
 
-	# Follower check at the parallel position, with the minimum over the
-	# whole lateral move. min_gap = fgap + min(0, delta - fv.speed*t).
 	var a_F_new: float = 0.0
-	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
 	if tgt_fol != null:
 		var fi: Dictionary = tgt_fol
 		var fv: Vehicle = fi["vehicle"]
@@ -307,8 +317,6 @@ func _current_accel(v: Vehicle, occ: Dictionary) -> float:
 	var info: Dictionary = leader
 	return _idm(v.speed, v.desired_speed(), info["gap"], info["vehicle"].speed)
 
-# Sample the target lane's leader at the position we will actually occupy
-# after the change, not at our current position.
 func _accel_in_lane(v: Vehicle, target: Lane, at_dist: float, occ: Dictionary) -> float:
 	var lead: Variant = _leader_on_lane_at(target, at_dist, occ)
 	if lead == null:
@@ -316,6 +324,8 @@ func _accel_in_lane(v: Vehicle, target: Lane, at_dist: float, occ: Dictionary) -
 	var info: Dictionary = lead
 	return _idm(v.speed, target.speed_limit, info["gap"], info["vehicle"].speed)
 
+# Inclusive: a vehicle at exactly `dist` counts as a leader. Otherwise two
+# vehicles side-by-side at the same parallel distance can miss each other.
 func _leader_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
 	var lst: Array = occ.get(lane.curve, [])
 	for e in lst:
@@ -324,7 +334,7 @@ func _leader_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
 		if not is_instance_valid(ov):
 			continue
 		var d: float = ed["dist"]
-		if d > dist:
+		if d >= dist:
 			var gap: float = d - dist - (ov.length + 4.5) * 0.5
 			if gap < 0.0:
 				gap = 0.0
@@ -354,6 +364,9 @@ func _follower_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
 func _parallel_distance(v: Vehicle, target: Lane) -> float:
 	return _project_onto_lane(v.global_position, target)
 
+# Project onto the lane's curve using XZ distance only. The vehicle's
+# global_position has a +0.75 Y mesh lift, which would otherwise dominate
+# the distance metric near a lane centre.
 static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
 	var L: float = lane.length
 	if L < 0.1:
@@ -364,7 +377,7 @@ static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
 	for i in range(samples + 1):
 		var t: float = float(i) / float(samples)
 		var p: Vector3 = lane.curve.sample_baked(t * L)
-		var d: float = p.distance_squared_to(pos)
+		var d: float = Vector2(p.x - pos.x, p.z - pos.z).length_squared()
 		if d < best_d:
 			best_d = d
 			best_t = t
@@ -376,7 +389,9 @@ static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
 		var m2: float = lerpf(lo, hi, 2.0 / 3.0)
 		var p1: Vector3 = lane.curve.sample_baked(m1 * L)
 		var p2: Vector3 = lane.curve.sample_baked(m2 * L)
-		if p1.distance_squared_to(pos) < p2.distance_squared_to(pos):
+		var d1: float = Vector2(p1.x - pos.x, p1.z - pos.z).length_squared()
+		var d2: float = Vector2(p2.x - pos.x, p2.z - pos.z).length_squared()
+		if d1 < d2:
 			hi = m2
 		else:
 			lo = m1
