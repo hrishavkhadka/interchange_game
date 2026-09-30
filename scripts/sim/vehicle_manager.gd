@@ -27,9 +27,8 @@ const SAFETY_GAP_FACTOR: float = 1.0
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
 
-# Junction yielding
 const YIELD_DIST: float = 25.0
-const YIELD_OFFSET: float = 3.0
+const YIELD_OFFSET: float = 0.5
 
 var _timer: float = 0.0
 var _tick_counter: int = 0
@@ -94,6 +93,17 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 	if not is_instance_valid(v):
 		return
 
+	# Stuck detector. If the vehicle has been essentially stopped for a
+	# while, either abort a lane change it can no longer complete, or clear
+	# stale decision state.
+	if v.speed < Vehicle.STUCK_SPEED:
+		v.stuck_timer += delta
+		if v.stuck_timer > Vehicle.STUCK_TIME:
+			_unstick(v)
+			v.stuck_timer = 0.0
+	else:
+		v.stuck_timer = 0.0
+
 	v.cooldown = maxf(0.0, v.cooldown - delta)
 	if v.avoid_timer > 0.0:
 		v.avoid_timer = maxf(0.0, v.avoid_timer - delta)
@@ -113,9 +123,6 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 		var lv: Vehicle = info["vehicle"]
 		lead_speed = lv.speed
 
-	# Junction yield: if approaching a node and a conflicting incoming lane
-	# already has a vehicle inside, place a virtual stopped leader at the
-	# stop line.
 	var yield_gap: float = _junction_yield_gap(v)
 	if yield_gap >= 0.0 and yield_gap < gap:
 		gap = yield_gap
@@ -129,8 +136,17 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 
 	_advance(v, v.speed * delta)
 
-# Returns -1 if no yield, else the gap to a virtual stopped vehicle at the
-# yield stop line.
+func _unstick(v: Vehicle) -> void:
+	if v.current_step_is_lateral():
+		# We committed a lane change and can no longer complete it. Revert.
+		v.abort_lane_change()
+		return
+	# On our own lane. Nothing to revert; just clear stale state so the next
+	# MOBIL tick evaluates freely.
+	v.avoid_lane = null
+	v.avoid_timer = 0.0
+	v.cooldown = 0.0
+
 func _junction_yield_gap(v: Vehicle) -> float:
 	if v.current_lane() == null:
 		return -1.0
@@ -142,12 +158,10 @@ func _junction_yield_gap(v: Vehicle) -> float:
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room > YIELD_DIST:
 		return -1.0
-
 	var my_lane: Lane = v.current_lane()
 	var conflicts: Array = LaneGraph.conflicting_lanes.get(my_lane, [])
 	if conflicts.is_empty():
 		return -1.0
-
 	var any_inside: bool = false
 	for other in conflicts:
 		if _lane_has_vehicle_inside(other):
@@ -155,7 +169,6 @@ func _junction_yield_gap(v: Vehicle) -> float:
 			break
 	if not any_inside:
 		return -1.0
-
 	var gap_to_line: float = room - YIELD_OFFSET
 	if gap_to_line < 0.0:
 		gap_to_line = 0.0
@@ -196,7 +209,9 @@ func _advance(v: Vehicle, move: float) -> void:
 			var new_step: PathStep = v.path[v.step_index]
 			v.distance_on_step = new_step.start_dist
 			if new_step.is_lane:
-				v.lateral_target_lane = null
+				# Successful completion of a lateral move (if any) plus
+				# arrival on a new lane.
+				v.complete_lane_change()
 				v.cooldown = maxf(v.cooldown, JUNCTION_ARRIVAL_COOLDOWN)
 
 # ------------------------------------------------------------------ MOBIL

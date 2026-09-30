@@ -3,6 +3,8 @@ extends Node3D
 
 const LATERAL_SAMPLES: int = 16
 const AVOID_SECONDS: float = 8.0
+const STUCK_SPEED: float = 0.2
+const STUCK_TIME: float = 2.5
 
 var path: Array[PathStep] = []
 var step_index: int = 0
@@ -15,14 +17,18 @@ var cooldown: float = 0.0
 var avoid_lane: Lane = null
 var avoid_timer: float = 0.0
 
-# While a lateral move is in progress, the vehicle's curve is a private
-# Bézier. To make it visible to traffic on the target lane during the move,
-# it registers a second occupancy entry on `lateral_target_lane.curve` that
-# moves from `lateral_occupancy_start` to `lateral_occupancy_end` as the
-# Bézier progresses.
 var lateral_target_lane: Lane = null
 var lateral_occupancy_start: float = 0.0
 var lateral_occupancy_end: float = 0.0
+
+# State saved at the moment a lane change begins. If the vehicle gets stuck
+# on the lateral step, we restore this and forget the lane change.
+var _saved_path: Array[PathStep] = []
+var _saved_step_index: int = 0
+var _saved_distance: float = 0.0
+var _saved_avoid_lane: Lane = null
+var _saved_avoid_timer: float = 0.0
+var stuck_timer: float = 0.0
 
 var _mesh: MeshInstance3D
 
@@ -43,6 +49,17 @@ func current_lane() -> Lane:
 	if not s.is_lane:
 		return null
 	return s.lane_ref
+
+func current_step_is_lane() -> bool:
+	if path.is_empty() or step_index >= path.size():
+		return false
+	return path[step_index].is_lane
+
+func current_step_is_lateral() -> bool:
+	if path.is_empty() or step_index >= path.size():
+		return false
+	var s: PathStep = path[step_index]
+	return (not s.is_lane) and (not s.is_transition)
 
 func desired_speed() -> float:
 	if path.is_empty() or step_index >= path.size():
@@ -74,6 +91,8 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	lateral_target_lane = null
 	lateral_occupancy_start = 0.0
 	lateral_occupancy_end = 0.0
+	_saved_path = []
+	stuck_timer = 0.0
 
 	_mesh = MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -87,10 +106,6 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 
 	_update_transform()
 
-# Entries this vehicle occupies for other vehicles' leader lookups. Normally
-# one entry. During a lateral move, a second entry tracks the vehicle's
-# projected position on the target lane, interpolated from the parallel
-# position to the landing position as the Bézier progresses.
 func occupancy_entries() -> Array:
 	var result: Array = []
 	var c := current_curve()
@@ -105,10 +120,6 @@ func occupancy_entries() -> Array:
 		result.append({ "curve": lateral_target_lane.curve, "dist": d })
 	return result
 
-# `p_par` is the vehicle's projection onto the target lane before the move.
-# `target_offset` is where it lands. The lateral Bézier goes from the
-# vehicle's world position to the target lane's world position at
-# `target_offset`.
 func begin_lane_change(
 		target_lane: Lane,
 		p_par: float,
@@ -119,6 +130,14 @@ func begin_lane_change(
 	if c_cur == null:
 		return
 	var old_lane: Lane = current_lane()
+
+	# Save the pre-change state so we can revert if we get stuck on the
+	# lateral move.
+	_saved_path = path.duplicate()
+	_saved_step_index = step_index
+	_saved_distance = distance_on_step
+	_saved_avoid_lane = avoid_lane
+	_saved_avoid_timer = avoid_timer
 
 	var start_p: Vector3 = c_cur.sample_baked(distance_on_step)
 	var t_off: float = clampf(target_offset, 0.0, target_lane.length)
@@ -168,6 +187,27 @@ func begin_lane_change(
 	lateral_target_lane = target_lane
 	lateral_occupancy_start = p_par
 	lateral_occupancy_end = t_off
+	stuck_timer = 0.0
+
+# Restore the pre-lane-change path. Clears the lateral registration.
+func abort_lane_change() -> void:
+	if _saved_path.is_empty():
+		return
+	path = _saved_path
+	step_index = _saved_step_index
+	distance_on_step = _saved_distance
+	avoid_lane = _saved_avoid_lane
+	avoid_timer = _saved_avoid_timer
+	lateral_target_lane = null
+	_saved_path = []
+	stuck_timer = 0.0
+	cooldown = 3.0
+
+# Called when the vehicle successfully completes a lateral move and enters
+# the target lane. Clears the saved state.
+func complete_lane_change() -> void:
+	_saved_path = []
+	lateral_target_lane = null
 
 static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
 	var u: float = 1.0 - t
@@ -187,8 +227,3 @@ func _update_transform() -> void:
 	dir.y = 0.0
 	if dir.length_squared() > 0.0001:
 		look_at(global_position + dir.normalized(), Vector3.UP)
-		
-func current_step_is_lane() -> bool:
-	if path.is_empty() or step_index >= path.size():
-		return false
-	return path[step_index].is_lane
