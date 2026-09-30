@@ -16,13 +16,12 @@ var color_seed: int = 0
 var cooldown: float = 0.0
 var avoid_lane: Lane = null
 var avoid_timer: float = 0.0
+var yield_timer: float = 0.0
 
 var lateral_target_lane: Lane = null
 var lateral_occupancy_start: float = 0.0
 var lateral_occupancy_end: float = 0.0
 
-# State saved at the moment a lane change begins. If the vehicle gets stuck
-# on the lateral step, we restore this and forget the lane change.
 var _saved_path: Array[PathStep] = []
 var _saved_step_index: int = 0
 var _saved_distance: float = 0.0
@@ -88,6 +87,7 @@ func setup(steps: Array[PathStep], t: RoadNode, seed_value: int, v0: float) -> v
 	cooldown = 0.0
 	avoid_lane = null
 	avoid_timer = 0.0
+	yield_timer = 0.0
 	lateral_target_lane = null
 	lateral_occupancy_start = 0.0
 	lateral_occupancy_end = 0.0
@@ -131,8 +131,6 @@ func begin_lane_change(
 		return
 	var old_lane: Lane = current_lane()
 
-	# Save the pre-change state so we can revert if we get stuck on the
-	# lateral move.
 	_saved_path = path.duplicate()
 	_saved_step_index = step_index
 	_saved_distance = distance_on_step
@@ -189,7 +187,6 @@ func begin_lane_change(
 	lateral_occupancy_end = t_off
 	stuck_timer = 0.0
 
-# Restore the pre-lane-change path. Clears the lateral registration.
 func abort_lane_change() -> void:
 	if _saved_path.is_empty():
 		return
@@ -203,8 +200,6 @@ func abort_lane_change() -> void:
 	stuck_timer = 0.0
 	cooldown = 3.0
 
-# Called when the vehicle successfully completes a lateral move and enters
-# the target lane. Clears the saved state.
 func complete_lane_change() -> void:
 	_saved_path = []
 	lateral_target_lane = null

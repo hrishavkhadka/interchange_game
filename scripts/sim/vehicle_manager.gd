@@ -29,6 +29,8 @@ const LC_FORWARD_TIME: float = 1.0
 
 const YIELD_DIST: float = 25.0
 const YIELD_OFFSET: float = 0.5
+const YIELD_TIMEOUT: float = 4.0
+const YIELD_INSIDE_SPEED: float = 0.5
 
 var _timer: float = 0.0
 var _tick_counter: int = 0
@@ -93,9 +95,7 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 	if not is_instance_valid(v):
 		return
 
-	# Stuck detector. If the vehicle has been essentially stopped for a
-	# while, either abort a lane change it can no longer complete, or clear
-	# stale decision state.
+	# Stuck detector.
 	if v.speed < Vehicle.STUCK_SPEED:
 		v.stuck_timer += delta
 		if v.stuck_timer > Vehicle.STUCK_TIME:
@@ -123,7 +123,17 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 		var lv: Vehicle = info["vehicle"]
 		lead_speed = lv.speed
 
+	# Yield. Update timer first; if it exceeds the timeout, ignore the yield
+	# and proceed. This breaks starvation deadlocks when the junction is
+	# continuously busy.
 	var yield_gap: float = _junction_yield_gap(v)
+	if yield_gap >= 0.0:
+		v.yield_timer += delta
+		if v.yield_timer > YIELD_TIMEOUT:
+			yield_gap = -1.0
+	else:
+		v.yield_timer = 0.0
+
 	if yield_gap >= 0.0 and yield_gap < gap:
 		gap = yield_gap
 		lead_speed = 0.0
@@ -138,11 +148,8 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 
 func _unstick(v: Vehicle) -> void:
 	if v.current_step_is_lateral():
-		# We committed a lane change and can no longer complete it. Revert.
 		v.abort_lane_change()
 		return
-	# On our own lane. Nothing to revert; just clear stale state so the next
-	# MOBIL tick evaluates freely.
 	v.avoid_lane = null
 	v.avoid_timer = 0.0
 	v.cooldown = 0.0
@@ -174,6 +181,9 @@ func _junction_yield_gap(v: Vehicle) -> float:
 		gap_to_line = 0.0
 	return gap_to_line
 
+# A conflicting vehicle only counts as blocking if it is actually moving
+# through the junction. A vehicle stuck on a transition (gridlock, or
+# collision pile-up) does not block others indefinitely.
 func _lane_has_vehicle_inside(lane: Lane) -> bool:
 	for v in _vehicles:
 		if not is_instance_valid(v):
@@ -182,6 +192,8 @@ func _lane_has_vehicle_inside(lane: Lane) -> bool:
 			continue
 		var step: PathStep = v.path[v.step_index]
 		if not step.is_transition:
+			continue
+		if v.speed < YIELD_INSIDE_SPEED:
 			continue
 		var prev_step: PathStep = v.path[v.step_index - 1]
 		if prev_step.lane_ref == lane:
@@ -209,8 +221,6 @@ func _advance(v: Vehicle, move: float) -> void:
 			var new_step: PathStep = v.path[v.step_index]
 			v.distance_on_step = new_step.start_dist
 			if new_step.is_lane:
-				# Successful completion of a lateral move (if any) plus
-				# arrival on a new lane.
 				v.complete_lane_change()
 				v.cooldown = maxf(v.cooldown, JUNCTION_ARRIVAL_COOLDOWN)
 
