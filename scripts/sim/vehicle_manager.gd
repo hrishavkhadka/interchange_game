@@ -18,11 +18,12 @@ const IDM_MIN_ACCEL: float = -12.0
 const MOBIL_POLITENESS: float = 0.5
 const MOBIL_THRESHOLD: float = 1.7
 const B_SAFE: float = 2.0
-const MOBIL_TICK_INTERVAL: int = 3
+const MOBIL_TICK_INTERVAL: int = 1
 const MIN_LANE_CHANGE_ROOM: float = 12.0
 const LC_COOLDOWN: float = 5.0
 const JUNCTION_ARRIVAL_COOLDOWN: float = 1.2
 const SAFETY_GAP_FACTOR: float = 1.0
+const REACTION_TIME: float = 1.0
 
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
@@ -30,6 +31,7 @@ const LC_FORWARD_TIME: float = 1.0
 const YIELD_DIST: float = 25.0
 const YIELD_OFFSET: float = 0.5
 const YIELD_TIMEOUT: float = 4.0
+const YIELD_TIMEOUT_JITTER: float = 2.5
 const YIELD_INSIDE_SPEED: float = 0.5
 
 var _timer: float = 0.0
@@ -95,7 +97,6 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 	if not is_instance_valid(v):
 		return
 
-	# Stuck detector.
 	if v.speed < Vehicle.STUCK_SPEED:
 		v.stuck_timer += delta
 		if v.stuck_timer > Vehicle.STUCK_TIME:
@@ -123,13 +124,13 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 		var lv: Vehicle = info["vehicle"]
 		lead_speed = lv.speed
 
-	# Yield. Update timer first; if it exceeds the timeout, ignore the yield
-	# and proceed. This breaks starvation deadlocks when the junction is
-	# continuously busy.
 	var yield_gap: float = _junction_yield_gap(v)
 	if yield_gap >= 0.0:
 		v.yield_timer += delta
-		if v.yield_timer > YIELD_TIMEOUT:
+		# Per-vehicle jitter so vehicles on different approaches do not time
+		# out on the same tick and pile into the junction together.
+		var jitter: float = float(v.color_seed % 5) * 0.5
+		if v.yield_timer > YIELD_TIMEOUT + jitter:
 			yield_gap = -1.0
 	else:
 		v.yield_timer = 0.0
@@ -181,9 +182,6 @@ func _junction_yield_gap(v: Vehicle) -> float:
 		gap_to_line = 0.0
 	return gap_to_line
 
-# A conflicting vehicle only counts as blocking if it is actually moving
-# through the junction. A vehicle stuck on a transition (gridlock, or
-# collision pile-up) does not block others indefinitely.
 func _lane_has_vehicle_inside(lane: Lane) -> bool:
 	for v in _vehicles:
 		if not is_instance_valid(v):
@@ -252,33 +250,40 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 			return
 
 func _mobil_ok(v: Vehicle, target: Lane, p_par: float, target_off: float, occ: Dictionary, a_cur: float) -> bool:
+	var delta: float = target_off - p_par
+	var t_move: float = delta / maxf(target.speed_limit, 1.0)
+
+	# Leader check at the LANDING position, with the minimum over the whole
+	# lateral move. See derivation: min_gap = lgap + min(delta, lv.speed*t).
 	var tgt_lead: Variant = _leader_on_lane_at(target, target_off, occ)
-	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
 	if tgt_lead != null:
 		var li: Dictionary = tgt_lead
 		var lv: Vehicle = li["vehicle"]
 		var lgap: float = li["gap"]
-		var t_move: float = (target_off - p_par) / maxf(target.speed_limit, 0.1)
-		var lgap_at_landing: float = lgap - lv.speed * t_move + v.speed * t_move
-		var min_lead_gap: float = IDM_S0 + v.speed * IDM_T * SAFETY_GAP_FACTOR
-		if lgap_at_landing < min_lead_gap:
+		var lgap_min: float = lgap + minf(delta, lv.speed * t_move)
+		var min_lead_gap: float = IDM_S0 + v.speed * IDM_T * SAFETY_GAP_FACTOR + v.speed * REACTION_TIME
+		if lgap_min < min_lead_gap:
 			return false
-		var a_L_new: float = _idm(lv.speed, lv.desired_speed(), lgap_at_landing, v.speed)
+		var a_L_new: float = _idm(lv.speed, lv.desired_speed(), lgap_min, v.speed)
 		if a_L_new < -B_SAFE:
 			return false
+
+	# Follower check at the parallel position, with the minimum over the
+	# whole lateral move. min_gap = fgap + min(0, delta - fv.speed*t).
 	var a_F_new: float = 0.0
+	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
 	if tgt_fol != null:
 		var fi: Dictionary = tgt_fol
 		var fv: Vehicle = fi["vehicle"]
 		var fgap: float = fi["gap"]
-		var t_move2: float = (target_off - p_par) / maxf(target.speed_limit, 0.1)
-		var fgap_at_landing: float = fgap + (v.speed - fv.speed) * t_move2
-		var min_fol_gap: float = IDM_S0 + fv.speed * IDM_T * SAFETY_GAP_FACTOR
-		if fgap_at_landing < min_fol_gap:
+		var fgap_min: float = fgap + minf(0.0, delta - fv.speed * t_move)
+		var min_fol_gap: float = IDM_S0 + fv.speed * IDM_T * SAFETY_GAP_FACTOR + fv.speed * REACTION_TIME
+		if fgap_min < min_fol_gap:
 			return false
-		a_F_new = _idm(fv.speed, fv.desired_speed(), fgap_at_landing, v.speed)
+		a_F_new = _idm(fv.speed, fv.desired_speed(), fgap_min, v.speed)
 		if a_F_new < -B_SAFE:
 			return false
+
 	var a_F_old: float = 0.0
 	if tgt_fol != null:
 		var fi2: Dictionary = tgt_fol
@@ -290,7 +295,8 @@ func _mobil_ok(v: Vehicle, target: Lane, p_par: float, target_off: float, occ: D
 			a_F_old = _idm(fv2.speed, fv2.desired_speed(), gap_to_lead, lv2.speed)
 		else:
 			a_F_old = _idm(fv2.speed, fv2.desired_speed(), INF, 0.0)
-	var a_new: float = _accel_in_lane(v, target, p_par, occ)
+
+	var a_new: float = _accel_in_lane(v, target, target_off, occ)
 	var gain: float = (a_new - a_cur) + MOBIL_POLITENESS * (a_F_new - a_F_old)
 	return gain > MOBIL_THRESHOLD
 
@@ -301,8 +307,10 @@ func _current_accel(v: Vehicle, occ: Dictionary) -> float:
 	var info: Dictionary = leader
 	return _idm(v.speed, v.desired_speed(), info["gap"], info["vehicle"].speed)
 
-func _accel_in_lane(v: Vehicle, target: Lane, p_par: float, occ: Dictionary) -> float:
-	var lead: Variant = _leader_on_lane_at(target, p_par, occ)
+# Sample the target lane's leader at the position we will actually occupy
+# after the change, not at our current position.
+func _accel_in_lane(v: Vehicle, target: Lane, at_dist: float, occ: Dictionary) -> float:
+	var lead: Variant = _leader_on_lane_at(target, at_dist, occ)
 	if lead == null:
 		return _idm(v.speed, target.speed_limit, INF, 0.0)
 	var info: Dictionary = lead

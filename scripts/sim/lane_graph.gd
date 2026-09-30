@@ -216,8 +216,8 @@ func _build_adjacency() -> void:
 				a.adjacent_lanes.append(b)
 				b.adjacent_lanes.append(a)
 
-const CONFLICT_DIST: float = 2.5
-const CONFLICT_SAMPLES: int = 12
+const CONFLICT_DIST: float = 3.5
+const CONFLICT_SAMPLES: int = 30
 
 func _build_conflicts() -> void:
 	# Group incoming lanes by their node.
