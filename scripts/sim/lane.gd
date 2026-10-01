@@ -11,5 +11,9 @@ var to_node: RoadNode
 var speed_limit: float
 var next_lanes: Array[Lane] = []
 var prev_lanes: Array[Lane] = []
-var next_curves: Dictionary = {}
 var adjacent_lanes: Array[Lane] = []
+
+# Arcs from this lane, keyed by destination lane.
+var next_arcs: Dictionary = {}
+# Arcs into this lane, keyed by source lane.
+var prev_arcs: Dictionary = {}

@@ -3,7 +3,7 @@ extends Node3D
 
 const LIFT: float = 0.10
 const LANE_SAMPLES: int = 20
-const TRANSITION_SAMPLES: int = 10
+const ARC_SAMPLES: int = 10
 
 var _visible: bool = false
 var _mesh: MeshInstance3D
@@ -38,10 +38,8 @@ func _rebuild() -> void:
 	st.begin(Mesh.PRIMITIVE_LINES)
 	for lane in LaneGraph.lanes:
 		_draw_curve(st, lane.curve, lane.length, LANE_SAMPLES)
-		for departing in lane.next_curves:
-			var tc: Curve3D = lane.next_curves[departing]
-			if tc != null:
-				_draw_curve(st, tc, tc.get_baked_length(), TRANSITION_SAMPLES)
+	for arc in LaneGraph.arcs:
+		_draw_curve(st, arc.curve, arc.length, ARC_SAMPLES)
 	_mesh.mesh = st.commit()
 
 func _draw_curve(st: SurfaceTool, c: Curve3D, length: float, count: int) -> void:

@@ -20,17 +20,14 @@ func _ready() -> void:
 func _rebuild() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-
-	for lane in LaneGraph.lanes:
-		var lane_hw: float = lane.segment.road_type.lane_width * 0.5
-		for departing in lane.next_curves:
-			var c: Curve3D = lane.next_curves[departing]
-			if c == null:
-				continue
-			var d_hw: float = departing.segment.road_type.lane_width * 0.5
-			var hw: float = minf(lane_hw, d_hw)
-			_build_ribbon(st, c, hw)
-
+	for arc in LaneGraph.arcs:
+		var c: Curve3D = arc.curve
+		if c == null:
+			continue
+		var lane_hw: float = arc.from_lane.segment.road_type.lane_width * 0.5
+		var d_hw: float = arc.to_lane.segment.road_type.lane_width * 0.5
+		var hw: float = minf(lane_hw, d_hw)
+		_build_ribbon(st, c, hw)
 	_mesh.mesh = st.commit()
 
 func _build_ribbon(st: SurfaceTool, c: Curve3D, half_width: float) -> void:
@@ -38,7 +35,6 @@ func _build_ribbon(st: SurfaceTool, c: Curve3D, half_width: float) -> void:
 	if length < 0.1:
 		return
 	var samples: int = maxi(4, SAMPLES)
-
 	var prev_l: Vector3 = Vector3.ZERO
 	var prev_r: Vector3 = Vector3.ZERO
 	for i in range(samples + 1):
@@ -58,14 +54,11 @@ func _build_ribbon(st: SurfaceTool, c: Curve3D, half_width: float) -> void:
 		if right.length_squared() < 0.0001:
 			right = Vector3.RIGHT
 		right = right.normalized()
-
 		var l: Vector3 = p - right * half_width + Vector3(0.0, LIFT, 0.0)
 		var r: Vector3 = p + right * half_width + Vector3(0.0, LIFT, 0.0)
-
 		if i > 0:
 			_tri(st, prev_l, prev_r, l)
 			_tri(st, prev_r, r, l)
-
 		prev_l = l
 		prev_r = r
 

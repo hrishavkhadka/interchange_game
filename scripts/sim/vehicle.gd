@@ -58,7 +58,7 @@ func current_step_is_lateral() -> bool:
 	if path.is_empty() or step_index >= path.size():
 		return false
 	var s: PathStep = path[step_index]
-	return (not s.is_lane) and (not s.is_transition)
+	return (not s.is_lane) and (s.arc_ref == null)
 
 func desired_speed() -> float:
 	if path.is_empty() or step_index >= path.size():

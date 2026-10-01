@@ -81,7 +81,7 @@ func _physics_process(delta: float) -> void:
 func _print_debug_summary() -> void:
 	var n_active: int = 0
 	var n_lane: int = 0
-	var n_trans: int = 0
+	var n_arc: int = 0
 	var n_lat: int = 0
 	for v in _vehicles:
 		if not is_instance_valid(v):
@@ -92,8 +92,8 @@ func _print_debug_summary() -> void:
 		elif v.current_lane() != null:
 			n_lane += 1
 		else:
-			n_trans += 1
-	print("[sim] active=%d lane_steps=%d transitions=%d lateral=%d" % [n_active, n_lane, n_trans, n_lat])
+			n_arc += 1
+	print("[sim] active=%d lane_steps=%d arcs=%d lateral=%d" % [n_active, n_lane, n_arc, n_lat])
 
 func _prune_dead() -> void:
 	var alive: Array[Vehicle] = []
@@ -209,10 +209,8 @@ func _junction_yield_gap(v: Vehicle) -> float:
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room > YIELD_DIST:
 		return -1.0
-	# Waypoints never yield.
 	if node.is_waypoint:
 		return -1.0
-	# Reservation: only the closest vehicle at this node may proceed.
 	var nid: int = node.id
 	if _reserved_nodes.has(nid) and _reserved_nodes[nid] != v:
 		var gap_to_line: float = room - YIELD_OFFSET
@@ -244,14 +242,14 @@ func _lane_has_vehicle_inside(lane: Lane) -> bool:
 		if v.step_index >= v.path.size():
 			continue
 		var step: PathStep = v.path[v.step_index]
-		if step.is_transition and v.step_index >= 1:
+		if step.arc_ref != null and v.step_index >= 1:
 			var prev_step: PathStep = v.path[v.step_index - 1]
 			if prev_step.lane_ref == lane:
 				return true
 		if step.is_lane and step.lane_ref == lane:
 			if v.step_index + 1 < v.path.size():
 				var nxt: PathStep = v.path[v.step_index + 1]
-				if nxt.is_transition:
+				if nxt.arc_ref != null:
 					var remaining: float = step.length - v.distance_on_step
 					if remaining <= YIELD_COMMIT_DIST:
 						return true
@@ -281,12 +279,12 @@ func _advance(v: Vehicle, move: float) -> void:
 				v.complete_lane_change()
 				v.cooldown = maxf(v.cooldown, JUNCTION_ARRIVAL_COOLDOWN)
 
-# ------------------------------------------------------------------ Direction B
+# ------------------------------------------------------------------ lane changes
 
 func _next_route_lane(v: Vehicle) -> Variant:
 	for i in range(v.step_index + 1, v.path.size()):
 		var step: PathStep = v.path[i]
-		if step.is_transition:
+		if step.arc_ref != null:
 			if i + 1 < v.path.size():
 				var ns: PathStep = v.path[i + 1]
 				if ns.is_lane:
@@ -303,7 +301,7 @@ func _eligible_lanes(current: Lane, next_lane: Variant) -> Array:
 			continue
 		if next_lane != null:
 			var nl: Lane = next_lane
-			if not lane.next_curves.has(nl):
+			if not lane.next_arcs.has(nl):
 				continue
 		result.append(lane)
 	return result
@@ -422,11 +420,11 @@ func _build_steps_from_offset(lanes: Array, offset: float) -> Array[PathStep]:
 			steps.append(PathStep.make(lane.curve, lane.speed_limit, true, lane))
 		if i + 1 < lanes.size():
 			var nxt: Lane = lanes[i + 1]
-			if lane.next_curves.has(nxt):
-				var tc: Curve3D = lane.next_curves[nxt]
-				if tc != null and tc.get_baked_length() > 0.05:
+			if lane.next_arcs.has(nxt):
+				var arc: LaneArc = lane.next_arcs[nxt]
+				if arc != null and arc.length > 0.05:
 					var sp: float = minf(lane.speed_limit, nxt.speed_limit)
-					steps.append(PathStep.make(tc, sp, false, null, 0.0, true))
+					steps.append(PathStep.make(arc.curve, sp, false, null, 0.0, arc))
 	return steps
 
 # ------------------------------------------------------------------ leader / IDM
@@ -576,7 +574,7 @@ func _align_exit_lane(route: Array, target: RoadNode, pref_idx: int) -> Array:
 			continue
 		if lane.lane_index != pref_idx:
 			continue
-		if not second_last.next_curves.has(lane):
+		if not second_last.next_arcs.has(lane):
 			continue
 		var new_route: Array = route.duplicate()
 		new_route[new_route.size() - 1] = lane
@@ -661,11 +659,11 @@ func _build_steps(lanes: Array) -> Array[PathStep]:
 		steps.append(PathStep.make(lane.curve, lane.speed_limit, true, lane))
 		if i + 1 < lanes.size():
 			var nxt: Lane = lanes[i + 1]
-			if lane.next_curves.has(nxt):
-				var tc: Curve3D = lane.next_curves[nxt]
-				if tc != null and tc.get_baked_length() > 0.05:
+			if lane.next_arcs.has(nxt):
+				var arc: LaneArc = lane.next_arcs[nxt]
+				if arc != null and arc.length > 0.05:
 					var sp: float = minf(lane.speed_limit, nxt.speed_limit)
-					steps.append(PathStep.make(tc, sp, false, null, 0.0, true))
+					steps.append(PathStep.make(arc.curve, sp, false, null, 0.0, arc))
 	return steps
 
 func _dead_end_nodes() -> Array:
