@@ -167,7 +167,8 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 			v.avoid_lane = null
 
 	if run_mobil and v.cooldown <= 0.0 and v.current_lane() != null and enable_lane_changes:
-		_maybe_lane_change(v, occ)
+		pass
+		#_maybe_lane_change(v, occ) #disabled
 
 	var v0: float = v.desired_speed()
 	var leader: Variant = _find_leader(v, occ)
