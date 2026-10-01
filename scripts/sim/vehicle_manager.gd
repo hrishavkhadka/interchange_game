@@ -4,6 +4,7 @@ extends Node3D
 @export var spawn_interval: float = 0.2
 @export var spawn_clear_distance: float = 40.0
 @export var max_vehicles: int = 200
+@export var enable_lane_changes: bool = false
 
 var debug_lane_changes: bool = false
 var debug_vehicle_seed: int = -1
@@ -165,7 +166,7 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 		if v.avoid_timer <= 0.0:
 			v.avoid_lane = null
 
-	if run_mobil and v.cooldown <= 0.0 and v.current_lane() != null:
+	if run_mobil and v.cooldown <= 0.0 and v.current_lane() != null and enable_lane_changes:
 		_maybe_lane_change(v, occ)
 
 	var v0: float = v.desired_speed()
