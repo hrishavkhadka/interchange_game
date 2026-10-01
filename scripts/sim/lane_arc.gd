@@ -12,6 +12,7 @@ var node: RoadNode
 var curve: Curve3D
 var length: float
 var conflicting_arcs: Array = []   # Array[LaneArc]
+#var claimed_by_lane: Lane = null #DS told to add this but said nevermind don't change anything so i just left this here commented.
 
 # Per-tick reservation slot, set by VehicleManager.
 var primary = null   # Vehicle or null
