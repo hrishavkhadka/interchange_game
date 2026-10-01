@@ -24,14 +24,14 @@ const SAFETY_GAP_FACTOR: float = 1.2
 const TARGET_LEADER_MIN_SPEED: float = 3.0
 
 const MOBIL_TICK_INTERVAL: int = 1
-const MIN_LANE_CHANGE_ROOM: float = 12.0
+const MIN_LANE_CHANGE_ROOM: float = 8.0
 const LC_COOLDOWN: float = 3.0
 const JUNCTION_ARRIVAL_COOLDOWN: float = 0.5
 
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
 
-const EMPTY_MARGIN: int = 2
+const EMPTY_MARGIN: int = 1
 
 const YIELD_DIST: float = 25.0
 const YIELD_OFFSET: float = 0.5
@@ -317,7 +317,9 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	if current == null:
 		return
 	var next_lane: Variant = _next_route_lane(v)
-
+	
+	if next_lane == null:
+		return
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room < MIN_LANE_CHANGE_ROOM:
 		return
