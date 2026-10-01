@@ -1,6 +1,7 @@
 extends Node3D
 
 var _builder: RoadBuilder
+var _vehicles: VehicleManager
 
 func _ready() -> void:
 	_setup_environment()
@@ -31,9 +32,9 @@ func _ready() -> void:
 	lane_vis.name = "LaneVisualizer"
 	add_child(lane_vis)
 
-	var vehicles := VehicleManager.new()
-	vehicles.name = "VehicleManager"
-	add_child(vehicles)
+	_vehicles = VehicleManager.new()
+	_vehicles.name = "VehicleManager"
+	add_child(_vehicles)
 
 	var snap_toolbar := SnapToolbar.new()
 	snap_toolbar.name = "SnapToolbar"
@@ -64,6 +65,9 @@ func _input(event: InputEvent) -> void:
 			KEY_2: _builder.set_road_type_index(1)
 			KEY_3: _builder.set_road_type_index(2)
 			KEY_4: _builder.set_road_type_index(3)
+			KEY_K:
+				_vehicles.debug_lane_changes = not _vehicles.debug_lane_changes
+				print("[debug] lane-change logging = ", _vehicles.debug_lane_changes)
 
 func _setup_environment() -> void:
 	var env := Environment.new()

@@ -5,11 +5,9 @@ extends Node3D
 @export var spawn_clear_distance: float = 40.0
 @export var max_vehicles: int = 200
 
-# Debug logging. Turn on to print lane-change decisions for every vehicle.
-# Set debug_vehicle_seed to a specific color_seed (0-6) to see only that
-# vehicle's decisions. Leave at -1 to log all vehicles.
-@export var debug_lane_changes: bool = false
-@export var debug_vehicle_seed: int = -1
+var debug_lane_changes: bool = false
+var debug_vehicle_seed: int = -1
+var _debug_tick: int = 0
 
 const RNG_SEED: int = 987654321
 const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
@@ -33,9 +31,7 @@ const JUNCTION_ARRIVAL_COOLDOWN: float = 0.5
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
 
-# Direction B constants
-const LOOKAHEAD_DIST: float = 50.0
-const EMPTY_MARGIN: int = 1
+const EMPTY_MARGIN: int = 2
 
 const YIELD_DIST: float = 25.0
 const YIELD_OFFSET: float = 0.5
@@ -70,11 +66,60 @@ func _physics_process(delta: float) -> void:
 	var occ := _build_occupancy()
 	var run_mobil: bool = (_tick_counter % MOBIL_TICK_INTERVAL) == 0
 	_tick_counter += 1
+	_debug_tick += 1
 	for v in _vehicles:
 		_step_vehicle(v, occ, delta, run_mobil)
 	for v in _vehicles:
 		if is_instance_valid(v):
 			v._update_transform()
+	if debug_lane_changes and (_debug_tick % 120) == 0:
+		_print_debug_summary()
+
+func _print_debug_summary() -> void:
+	var n_active: int = 0
+	var n_lane: int = 0
+	var n_trans: int = 0
+	var n_lat: int = 0
+	for v in _vehicles:
+		if not is_instance_valid(v):
+			continue
+		n_active += 1
+		if v.current_step_is_lateral():
+			n_lat += 1
+		elif v.current_lane() != null:
+			n_lane += 1
+		else:
+			n_trans += 1
+	print("[sim] active=%d lane_steps=%d transitions=%d lateral=%d" % [n_active, n_lane, n_trans, n_lat])
+
+	var printed: int = 0
+	for v in _vehicles:
+		if printed >= 5:
+			break
+		if not is_instance_valid(v):
+			continue
+		var cur: Lane = v.current_lane()
+		if cur == null:
+			print("[sim]  v%d non-lane step idx=%d" % [v.color_seed, v.step_index])
+			printed += 1
+			continue
+		var next_lane: Variant = _next_route_lane(v)
+		var eligible: Array = _eligible_lanes(cur, next_lane)
+		var cnt: int = 0
+		for other in _vehicles:
+			if other == v or not is_instance_valid(other):
+				continue
+			if other.current_curve() == cur.curve:
+				cnt += 1
+		var next_str: String = "null"
+		if next_lane != null:
+			var nl: Lane = next_lane
+			next_str = "%s%d" % [nl.direction, nl.lane_index]
+		print("[sim]  v%d lane=%s%d dist=%.1f room=%.1f cnt_lane=%d eligible=%d next=%s" % [
+			v.color_seed, cur.direction, cur.lane_index,
+			v.distance_on_step, v.current_step_length() - v.distance_on_step,
+			cnt, eligible.size(), next_str])
+		printed += 1
 
 func _prune_dead() -> void:
 	var alive: Array[Vehicle] = []
@@ -106,10 +151,10 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 	if not is_instance_valid(v):
 		return
 
-	if v.speed < Vehicle.STUCK_SPEED:
+	if v.current_step_is_lateral() and v.speed < Vehicle.STUCK_SPEED:
 		v.stuck_timer += delta
 		if v.stuck_timer > Vehicle.STUCK_TIME:
-			_unstick(v)
+			v.abort_lane_change()
 			v.stuck_timer = 0.0
 	else:
 		v.stuck_timer = 0.0
@@ -153,14 +198,6 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 	v.speed = new_speed
 
 	_advance(v, v.speed * delta)
-
-func _unstick(v: Vehicle) -> void:
-	if v.current_step_is_lateral():
-		v.abort_lane_change()
-		return
-	v.avoid_lane = null
-	v.avoid_timer = 0.0
-	v.cooldown = 0.0
 
 func _junction_yield_gap(v: Vehicle) -> float:
 	if v.current_lane() == null:
@@ -237,9 +274,6 @@ func _advance(v: Vehicle, move: float) -> void:
 
 # ------------------------------------------------------------------ Direction B: lane choice
 
-# Returns the lane the vehicle must be on after its next transition, or
-# null if this is the final segment of the route (in which case every
-# lane on the current segment and direction is eligible).
 func _next_route_lane(v: Vehicle) -> Variant:
 	for i in range(v.step_index + 1, v.path.size()):
 		var step: PathStep = v.path[i]
@@ -251,9 +285,6 @@ func _next_route_lane(v: Vehicle) -> Variant:
 			return null
 	return null
 
-# All lanes on the same segment and direction as `current` that can reach
-# `next_lane` via a transition. If `next_lane` is null, every lane on the
-# segment is eligible.
 func _eligible_lanes(current: Lane, next_lane: Variant) -> Array:
 	var result: Array = []
 	for lane in LaneGraph.lanes:
@@ -268,7 +299,7 @@ func _eligible_lanes(current: Lane, next_lane: Variant) -> Array:
 		result.append(lane)
 	return result
 
-func _count_ahead(lane: Lane, from_dist: float, occ: Dictionary, exclude: Vehicle) -> int:
+func _count_on_lane(lane: Lane, occ: Dictionary, exclude: Vehicle) -> int:
 	var count: int = 0
 	var lst: Array = occ.get(lane.curve, [])
 	for e in lst:
@@ -278,9 +309,7 @@ func _count_ahead(lane: Lane, from_dist: float, occ: Dictionary, exclude: Vehicl
 			continue
 		if not is_instance_valid(ov):
 			continue
-		var d: float = ed["dist"]
-		if d > from_dist and d <= from_dist + LOOKAHEAD_DIST:
-			count += 1
+		count += 1
 	return count
 
 func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
@@ -297,35 +326,33 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	if eligible.size() < 2:
 		return
 
-	var current_count: int = _count_ahead(current, v.distance_on_step, occ, v)
+	var my_count: int = _count_on_lane(current, occ, v)
 
 	var best: Lane = current
-	var best_count: int = current_count
+	var best_count: int = my_count
 	for lane_v in eligible:
 		var l: Lane = lane_v
 		if l == current:
 			continue
-		var proj: float = _project_onto_lane(v.global_position, l)
-		var c: int = _count_ahead(l, proj, occ, v)
-		if c <= best_count - EMPTY_MARGIN:
-			best = l
+		var c: int = _count_on_lane(l, occ, v)
+		if c < best_count:
 			best_count = c
-
-	if debug_lane_changes and (debug_vehicle_seed < 0 or debug_vehicle_seed == v.color_seed):
-		var best_name: String = "none" if best == null else "seg=%d lane=%d" % [best.segment.get_instance_id(), best.lane_index]
-		var cur_name: String = "seg=%d lane=%d" % [current.segment.get_instance_id(), current.lane_index]
-		print("[lc] v%d cur(%s) cnt=%d | best(%s) cnt=%d | eligible=%d | next=%s" % [
-			v.color_seed, cur_name, current_count, best_name, best_count,
-			eligible.size(), "yes" if next_lane != null else "last"])
+			best = l
 
 	if best == current:
 		return
 	if best == v.avoid_lane:
 		return
+	if my_count - best_count < EMPTY_MARGIN:
+		return
+
+	if debug_lane_changes and (debug_vehicle_seed < 0 or debug_vehicle_seed == v.color_seed):
+		print("[lc] v%d seg=%d cur=%d cnt=%d -> tgt=%d cnt=%d" % [
+			v.color_seed, current.segment.get_instance_id(),
+			current.lane_index, my_count,
+			best.lane_index, best_count])
 
 	if not _change_safe(v, best, occ):
-		if debug_lane_changes and (debug_vehicle_seed < 0 or debug_vehicle_seed == v.color_seed):
-			print("  -> rejected by safety")
 		return
 
 	_execute_lane_change(v, best)
@@ -360,9 +387,6 @@ func _change_safe(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
 			return false
 	return true
 
-# Preserve the rest of the route. Replace only the current lane with the
-# target lane. Re-running A* would pick the first-iterated lane at every
-# segment, defeating the balance we just achieved.
 func _remaining_lanes(v: Vehicle) -> Array:
 	var result: Array = []
 	for i in range(v.step_index, v.path.size()):
@@ -494,9 +518,6 @@ func _follower_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
 	if gap < 0.0:
 		gap = 0.0
 	return { "vehicle": best, "gap": gap }
-
-func _parallel_distance(v: Vehicle, target: Lane) -> float:
-	return _project_onto_lane(v.global_position, target)
 
 static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
 	var L: float = lane.length
