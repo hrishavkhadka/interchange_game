@@ -135,7 +135,7 @@ func _compute_reservations() -> void:
 		var node := lane.to_node
 		if node == null:
 			continue
-		if node.is_waypoint:
+		if node.is_waypoint and node.segment_ends.size() == 2:
 			continue
 		var room: float = v.current_step_length() - v.distance_on_step
 		if room > YIELD_COMMIT_DIST:
@@ -209,7 +209,7 @@ func _junction_yield_gap(v: Vehicle) -> float:
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room > YIELD_DIST:
 		return -1.0
-	if node.is_waypoint:
+	if node.is_waypoint and node.segment_ends.size() == 2:
 		return -1.0
 	var nid: int = node.id
 	if _reserved_nodes.has(nid) and _reserved_nodes[nid] != v:
