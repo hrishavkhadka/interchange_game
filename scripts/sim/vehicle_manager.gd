@@ -5,6 +5,12 @@ extends Node3D
 @export var spawn_clear_distance: float = 40.0
 @export var max_vehicles: int = 200
 
+# Debug logging. Turn on to print lane-change decisions for every vehicle.
+# Set debug_vehicle_seed to a specific color_seed (0-6) to see only that
+# vehicle's decisions. Leave at -1 to log all vehicles.
+@export var debug_lane_changes: bool = false
+@export var debug_vehicle_seed: int = -1
+
 const RNG_SEED: int = 987654321
 const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
 
@@ -28,7 +34,7 @@ const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
 
 # Direction B constants
-const LOOKAHEAD_DIST: float = 30.0
+const LOOKAHEAD_DIST: float = 50.0
 const EMPTY_MARGIN: int = 1
 
 const YIELD_DIST: float = 25.0
@@ -231,9 +237,10 @@ func _advance(v: Vehicle, move: float) -> void:
 
 # ------------------------------------------------------------------ Direction B: lane choice
 
-# The lane the vehicle must be on after its next junction. Derived from the
-# path: walk to the next transition step, then return the lane step after it.
-func _next_route_lane(v: Vehicle) -> Lane:
+# Returns the lane the vehicle must be on after its next transition, or
+# null if this is the final segment of the route (in which case every
+# lane on the current segment and direction is eligible).
+func _next_route_lane(v: Vehicle) -> Variant:
 	for i in range(v.step_index + 1, v.path.size()):
 		var step: PathStep = v.path[i]
 		if step.is_transition:
@@ -244,22 +251,23 @@ func _next_route_lane(v: Vehicle) -> Lane:
 			return null
 	return null
 
-# All lanes on the same segment and direction as `current` that have a
-# transition leading to `next_lane`. The vehicle is free to occupy any of
-# them without breaking its route.
-func _eligible_lanes(current: Lane, next_lane: Lane) -> Array:
+# All lanes on the same segment and direction as `current` that can reach
+# `next_lane` via a transition. If `next_lane` is null, every lane on the
+# segment is eligible.
+func _eligible_lanes(current: Lane, next_lane: Variant) -> Array:
 	var result: Array = []
 	for lane in LaneGraph.lanes:
 		if lane.segment != current.segment:
 			continue
 		if lane.direction != current.direction:
 			continue
-		if not lane.next_curves.has(next_lane):
-			continue
+		if next_lane != null:
+			var nl: Lane = next_lane
+			if not lane.next_curves.has(nl):
+				continue
 		result.append(lane)
 	return result
 
-# How many vehicles are on `lane` between `from_dist` and `from_dist + LOOKAHEAD_DIST`.
 func _count_ahead(lane: Lane, from_dist: float, occ: Dictionary, exclude: Vehicle) -> int:
 	var count: int = 0
 	var lst: Array = occ.get(lane.curve, [])
@@ -279,9 +287,7 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	var current: Lane = v.current_lane()
 	if current == null:
 		return
-	var next_lane: Lane = _next_route_lane(v)
-	if next_lane == null:
-		return
+	var next_lane: Variant = _next_route_lane(v)
 
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room < MIN_LANE_CHANGE_ROOM:
@@ -291,14 +297,12 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	if eligible.size() < 2:
 		return
 
-	# Current congestion.
 	var current_count: int = _count_ahead(current, v.distance_on_step, occ, v)
 
-	# Find the emptiest eligible lane.
 	var best: Lane = current
 	var best_count: int = current_count
-	for lane in eligible:
-		var l: Lane = lane
+	for lane_v in eligible:
+		var l: Lane = lane_v
 		if l == current:
 			continue
 		var proj: float = _project_onto_lane(v.global_position, l)
@@ -307,12 +311,21 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 			best = l
 			best_count = c
 
+	if debug_lane_changes and (debug_vehicle_seed < 0 or debug_vehicle_seed == v.color_seed):
+		var best_name: String = "none" if best == null else "seg=%d lane=%d" % [best.segment.get_instance_id(), best.lane_index]
+		var cur_name: String = "seg=%d lane=%d" % [current.segment.get_instance_id(), current.lane_index]
+		print("[lc] v%d cur(%s) cnt=%d | best(%s) cnt=%d | eligible=%d | next=%s" % [
+			v.color_seed, cur_name, current_count, best_name, best_count,
+			eligible.size(), "yes" if next_lane != null else "last"])
+
 	if best == current:
 		return
 	if best == v.avoid_lane:
 		return
 
 	if not _change_safe(v, best, occ):
+		if debug_lane_changes and (debug_vehicle_seed < 0 or debug_vehicle_seed == v.color_seed):
+			print("  -> rejected by safety")
 		return
 
 	_execute_lane_change(v, best)
@@ -347,6 +360,17 @@ func _change_safe(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
 			return false
 	return true
 
+# Preserve the rest of the route. Replace only the current lane with the
+# target lane. Re-running A* would pick the first-iterated lane at every
+# segment, defeating the balance we just achieved.
+func _remaining_lanes(v: Vehicle) -> Array:
+	var result: Array = []
+	for i in range(v.step_index, v.path.size()):
+		var step: PathStep = v.path[i]
+		if step.is_lane and step.lane_ref != null:
+			result.append(step.lane_ref)
+	return result
+
 func _execute_lane_change(v: Vehicle, target_lane: Lane) -> void:
 	var p_par: float = _project_onto_lane(v.global_position, target_lane)
 	var lc_len: float = maxf(LC_FORWARD_MIN, v.speed * LC_FORWARD_TIME)
@@ -357,10 +381,11 @@ func _execute_lane_change(v: Vehicle, target_lane: Lane) -> void:
 		return
 	var target_off: float = p_par + lc_len
 
-	var new_route: Array = LanePathfinder.find_path(target_lane, v.target_node)
-	if new_route.is_empty():
+	var remaining: Array = _remaining_lanes(v)
+	if remaining.is_empty():
 		return
-	var new_steps: Array[PathStep] = _build_steps_from_offset(new_route, target_off)
+	remaining[0] = target_lane
+	var new_steps: Array[PathStep] = _build_steps_from_offset(remaining, target_off)
 	if new_steps.is_empty():
 		return
 	v.begin_lane_change(target_lane, p_par, target_off, new_steps, LC_COOLDOWN)
@@ -538,7 +563,6 @@ func _try_spawn() -> void:
 	if source_lanes.is_empty():
 		return
 
-	# Pick the emptiest entry lane that has a valid route to the target.
 	var best_lane: Lane = null
 	var best_route: Array = []
 	var best_count: int = 999999
