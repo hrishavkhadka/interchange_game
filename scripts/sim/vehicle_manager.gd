@@ -15,19 +15,21 @@ const IDM_T: float = 1.2
 const IDM_DELTA: float = 4.0
 const IDM_MIN_ACCEL: float = -8.0
 
-const MOBIL_POLITENESS: float = 0.5
-const MOBIL_THRESHOLD: float = 1.7
-const B_SAFE: float = 2.0
-const MOBIL_TICK_INTERVAL: int = 3
-const MIN_LANE_CHANGE_ROOM: float = 12.0
-const LC_COOLDOWN: float = 5.0
-const JUNCTION_ARRIVAL_COOLDOWN: float = 1.2
-const SAFETY_GAP_FACTOR: float = 1.3
-const REACTION_TIME: float = 1.5
+const B_SAFE: float = 4.0
+const SAFETY_GAP_FACTOR: float = 1.2
 const TARGET_LEADER_MIN_SPEED: float = 3.0
+
+const MOBIL_TICK_INTERVAL: int = 1
+const MIN_LANE_CHANGE_ROOM: float = 12.0
+const LC_COOLDOWN: float = 3.0
+const JUNCTION_ARRIVAL_COOLDOWN: float = 0.5
 
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
+
+# Direction B constants
+const LOOKAHEAD_DIST: float = 30.0
+const EMPTY_MARGIN: int = 1
 
 const YIELD_DIST: float = 25.0
 const YIELD_OFFSET: float = 0.5
@@ -181,9 +183,6 @@ func _junction_yield_gap(v: Vehicle) -> float:
 		gap_to_line = 0.0
 	return gap_to_line
 
-# A conflicting vehicle blocks the junction from the moment it is close
-# enough to commit to its transition. This closes the race where two
-# vehicles from different approaches both see the junction empty.
 func _lane_has_vehicle_inside(lane: Lane) -> bool:
 	for v in _vehicles:
 		if not is_instance_valid(v):
@@ -193,12 +192,10 @@ func _lane_has_vehicle_inside(lane: Lane) -> bool:
 		if v.step_index >= v.path.size():
 			continue
 		var step: PathStep = v.path[v.step_index]
-		# Case 1: on a transition whose source lane is `lane`.
 		if step.is_transition and v.step_index >= 1:
 			var prev_step: PathStep = v.path[v.step_index - 1]
 			if prev_step.lane_ref == lane:
 				return true
-		# Case 2: on `lane`, within commit distance of its transition.
 		if step.is_lane and step.lane_ref == lane:
 			if v.step_index + 1 < v.path.size():
 				var nxt: PathStep = v.path[v.step_index + 1]
@@ -232,173 +229,135 @@ func _advance(v: Vehicle, move: float) -> void:
 				v.complete_lane_change()
 				v.cooldown = maxf(v.cooldown, JUNCTION_ARRIVAL_COOLDOWN)
 
-# ------------------------------------------------------------------ MOBIL
+# ------------------------------------------------------------------ Direction B: lane choice
+
+# The lane the vehicle must be on after its next junction. Derived from the
+# path: walk to the next transition step, then return the lane step after it.
+func _next_route_lane(v: Vehicle) -> Lane:
+	for i in range(v.step_index + 1, v.path.size()):
+		var step: PathStep = v.path[i]
+		if step.is_transition:
+			if i + 1 < v.path.size():
+				var ns: PathStep = v.path[i + 1]
+				if ns.is_lane:
+					return ns.lane_ref
+			return null
+	return null
+
+# All lanes on the same segment and direction as `current` that have a
+# transition leading to `next_lane`. The vehicle is free to occupy any of
+# them without breaking its route.
+func _eligible_lanes(current: Lane, next_lane: Lane) -> Array:
+	var result: Array = []
+	for lane in LaneGraph.lanes:
+		if lane.segment != current.segment:
+			continue
+		if lane.direction != current.direction:
+			continue
+		if not lane.next_curves.has(next_lane):
+			continue
+		result.append(lane)
+	return result
+
+# How many vehicles are on `lane` between `from_dist` and `from_dist + LOOKAHEAD_DIST`.
+func _count_ahead(lane: Lane, from_dist: float, occ: Dictionary, exclude: Vehicle) -> int:
+	var count: int = 0
+	var lst: Array = occ.get(lane.curve, [])
+	for e in lst:
+		var ed: Dictionary = e
+		var ov: Vehicle = ed["vehicle"]
+		if ov == exclude:
+			continue
+		if not is_instance_valid(ov):
+			continue
+		var d: float = ed["dist"]
+		if d > from_dist and d <= from_dist + LOOKAHEAD_DIST:
+			count += 1
+	return count
 
 func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	var current: Lane = v.current_lane()
 	if current == null:
 		return
-	if current.adjacent_lanes.is_empty():
+	var next_lane: Lane = _next_route_lane(v)
+	if next_lane == null:
 		return
+
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room < MIN_LANE_CHANGE_ROOM:
 		return
-	var a_cur: float = _current_accel(v, occ)
-	for adj in current.adjacent_lanes:
-		if adj == v.avoid_lane:
+
+	var eligible: Array = _eligible_lanes(current, next_lane)
+	if eligible.size() < 2:
+		return
+
+	# Current congestion.
+	var current_count: int = _count_ahead(current, v.distance_on_step, occ, v)
+
+	# Find the emptiest eligible lane.
+	var best: Lane = current
+	var best_count: int = current_count
+	for lane in eligible:
+		var l: Lane = lane
+		if l == current:
 			continue
-		var p_par: float = _parallel_distance(v, adj)
-		var lc_len: float = maxf(LC_FORWARD_MIN, v.speed * LC_FORWARD_TIME)
-		var max_off: float = adj.length - 2.0
-		if p_par + lc_len > max_off:
-			lc_len = max_off - p_par
-		if lc_len < 6.0:
-			continue
-		var target_off: float = p_par + lc_len
-		if _mobil_ok(v, adj, p_par, target_off, occ, a_cur):
-			_execute_lane_change(v, adj, p_par, target_off, lc_len)
-			return
+		var proj: float = _project_onto_lane(v.global_position, l)
+		var c: int = _count_ahead(l, proj, occ, v)
+		if c <= best_count - EMPTY_MARGIN:
+			best = l
+			best_count = c
 
-func _mobil_ok(v: Vehicle, target: Lane, p_par: float, target_off: float, occ: Dictionary, a_cur: float) -> bool:
-	var delta: float = target_off - p_par
-	var t_move: float = delta / maxf(target.speed_limit, 1.0)
+	if best == current:
+		return
+	if best == v.avoid_lane:
+		return
 
-	var tgt_lead: Variant = _leader_on_lane_at(target, target_off, occ)
-	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
+	if not _change_safe(v, best, occ):
+		return
 
+	_execute_lane_change(v, best)
+
+func _change_safe(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
+	var p_par: float = _project_onto_lane(v.global_position, target)
+
+	var tgt_lead: Variant = _leader_on_lane_at(target, p_par, occ)
 	if tgt_lead != null:
 		var li: Dictionary = tgt_lead
 		var lv: Vehicle = li["vehicle"]
-		# Immediate leader is nearly stopped: target lane is congested.
 		if lv.speed < TARGET_LEADER_MIN_SPEED:
 			return false
 		var lgap: float = li["gap"]
-		var lgap_min: float = lgap + minf(delta, lv.speed * t_move)
-		var min_lead_gap: float = IDM_S0 + v.speed * IDM_T * SAFETY_GAP_FACTOR + v.speed * REACTION_TIME
-		if lgap_min < min_lead_gap:
+		var min_lead_gap: float = IDM_S0 + v.speed * IDM_T * SAFETY_GAP_FACTOR
+		if lgap < min_lead_gap:
 			return false
-		var a_L_new: float = _idm(lv.speed, lv.desired_speed(), lgap_min, v.speed)
+		var a_L_new: float = _idm(lv.speed, lv.desired_speed(), lgap, v.speed)
 		if a_L_new < -B_SAFE:
 			return false
 
-	var a_F_new: float = 0.0
+	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
 	if tgt_fol != null:
 		var fi: Dictionary = tgt_fol
 		var fv: Vehicle = fi["vehicle"]
 		var fgap: float = fi["gap"]
-		var fgap_min: float = fgap + minf(0.0, delta - fv.speed * t_move)
-		var min_fol_gap: float = IDM_S0 + fv.speed * IDM_T * SAFETY_GAP_FACTOR + fv.speed * REACTION_TIME
-		if fgap_min < min_fol_gap:
+		var min_fol_gap: float = IDM_S0 + fv.speed * IDM_T * SAFETY_GAP_FACTOR
+		if fgap < min_fol_gap:
 			return false
-		a_F_new = _idm(fv.speed, fv.desired_speed(), fgap_min, v.speed)
+		var a_F_new: float = _idm(fv.speed, fv.desired_speed(), fgap, v.speed)
 		if a_F_new < -B_SAFE:
 			return false
+	return true
 
-	var a_F_old: float = 0.0
-	if tgt_fol != null:
-		var fi2: Dictionary = tgt_fol
-		var fv2: Vehicle = fi2["vehicle"]
-		if tgt_lead != null:
-			var li2: Dictionary = tgt_lead
-			var lv2: Vehicle = li2["vehicle"]
-			var gap_to_lead: float = li2["gap"] + fi2["gap"]
-			a_F_old = _idm(fv2.speed, fv2.desired_speed(), gap_to_lead, lv2.speed)
-		else:
-			a_F_old = _idm(fv2.speed, fv2.desired_speed(), INF, 0.0)
+func _execute_lane_change(v: Vehicle, target_lane: Lane) -> void:
+	var p_par: float = _project_onto_lane(v.global_position, target_lane)
+	var lc_len: float = maxf(LC_FORWARD_MIN, v.speed * LC_FORWARD_TIME)
+	var max_off: float = target_lane.length - 2.0
+	if p_par + lc_len > max_off:
+		lc_len = max_off - p_par
+	if lc_len < 6.0:
+		return
+	var target_off: float = p_par + lc_len
 
-	var a_new: float = _accel_in_lane(v, target, target_off, occ)
-	var gain: float = (a_new - a_cur) + MOBIL_POLITENESS * (a_F_new - a_F_old)
-	return gain > MOBIL_THRESHOLD
-
-func _current_accel(v: Vehicle, occ: Dictionary) -> float:
-	var leader: Variant = _find_leader(v, occ)
-	if leader == null:
-		return _idm(v.speed, v.desired_speed(), INF, 0.0)
-	var info: Dictionary = leader
-	return _idm(v.speed, v.desired_speed(), info["gap"], info["vehicle"].speed)
-
-func _accel_in_lane(v: Vehicle, target: Lane, at_dist: float, occ: Dictionary) -> float:
-	var lead: Variant = _leader_on_lane_at(target, at_dist, occ)
-	if lead == null:
-		return _idm(v.speed, target.speed_limit, INF, 0.0)
-	var info: Dictionary = lead
-	return _idm(v.speed, target.speed_limit, info["gap"], info["vehicle"].speed)
-
-# Inclusive: a vehicle at exactly `dist` counts as a leader. Otherwise two
-# vehicles side-by-side at the same parallel distance can miss each other.
-func _leader_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
-	var lst: Array = occ.get(lane.curve, [])
-	for e in lst:
-		var ed: Dictionary = e
-		var ov: Vehicle = ed["vehicle"]
-		if not is_instance_valid(ov):
-			continue
-		var d: float = ed["dist"]
-		if d >= dist:
-			var gap: float = d - dist - (ov.length + 4.5) * 0.5
-			if gap < 0.0:
-				gap = 0.0
-			return { "vehicle": ov, "gap": gap }
-	return null
-
-func _follower_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
-	var lst: Array = occ.get(lane.curve, [])
-	var best: Vehicle = null
-	var best_d: float = -INF
-	for e in lst:
-		var ed: Dictionary = e
-		var ov: Vehicle = ed["vehicle"]
-		if not is_instance_valid(ov):
-			continue
-		var d: float = ed["dist"]
-		if d < dist and d > best_d:
-			best_d = d
-			best = ov
-	if best == null:
-		return null
-	var gap: float = dist - best_d - (best.length + 4.5) * 0.5
-	if gap < 0.0:
-		gap = 0.0
-	return { "vehicle": best, "gap": gap }
-
-func _parallel_distance(v: Vehicle, target: Lane) -> float:
-	return _project_onto_lane(v.global_position, target)
-
-# Project onto the lane's curve using XZ distance only. The vehicle's
-# global_position has a +0.75 Y mesh lift, which would otherwise dominate
-# the distance metric near a lane centre.
-static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
-	var L: float = lane.length
-	if L < 0.1:
-		return 0.0
-	var samples: int = 16
-	var best_d: float = INF
-	var best_t: float = 0.0
-	for i in range(samples + 1):
-		var t: float = float(i) / float(samples)
-		var p: Vector3 = lane.curve.sample_baked(t * L)
-		var d: float = Vector2(p.x - pos.x, p.z - pos.z).length_squared()
-		if d < best_d:
-			best_d = d
-			best_t = t
-	var step: float = 1.0 / float(samples)
-	var lo: float = maxf(best_t - step, 0.0)
-	var hi: float = minf(best_t + step, 1.0)
-	for _i in range(8):
-		var m1: float = lerpf(lo, hi, 1.0 / 3.0)
-		var m2: float = lerpf(lo, hi, 2.0 / 3.0)
-		var p1: Vector3 = lane.curve.sample_baked(m1 * L)
-		var p2: Vector3 = lane.curve.sample_baked(m2 * L)
-		var d1: float = Vector2(p1.x - pos.x, p1.z - pos.z).length_squared()
-		var d2: float = Vector2(p2.x - pos.x, p2.z - pos.z).length_squared()
-		if d1 < d2:
-			hi = m2
-		else:
-			lo = m1
-	return clampf(((lo + hi) * 0.5) * L, 0.0, L)
-
-func _execute_lane_change(v: Vehicle, target_lane: Lane, p_par: float, target_off: float, _lc_len: float) -> void:
-	var new_route: Array[Lane] = LanePathfinder.find_path(target_lane, v.target_node)
+	var new_route: Array = LanePathfinder.find_path(target_lane, v.target_node)
 	if new_route.is_empty():
 		return
 	var new_steps: Array[PathStep] = _build_steps_from_offset(new_route, target_off)
@@ -406,7 +365,7 @@ func _execute_lane_change(v: Vehicle, target_lane: Lane, p_par: float, target_of
 		return
 	v.begin_lane_change(target_lane, p_par, target_off, new_steps, LC_COOLDOWN)
 
-func _build_steps_from_offset(lanes: Array[Lane], offset: float) -> Array[PathStep]:
+func _build_steps_from_offset(lanes: Array, offset: float) -> Array[PathStep]:
 	var steps: Array[PathStep] = []
 	for i in range(lanes.size()):
 		var lane: Lane = lanes[i]
@@ -426,7 +385,7 @@ func _build_steps_from_offset(lanes: Array[Lane], offset: float) -> Array[PathSt
 					steps.append(PathStep.make(tc, sp, false, null, 0.0, true))
 	return steps
 
-# ------------------------------------------------------------------ core
+# ------------------------------------------------------------------ leader / IDM
 
 func _find_leader(v: Vehicle, occ: Dictionary) -> Variant:
 	var c := v.current_curve()
@@ -476,6 +435,74 @@ func _binary_search_gt(list: Array, dist: float) -> int:
 			hi = mid
 	return lo
 
+func _leader_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
+	var lst: Array = occ.get(lane.curve, [])
+	for e in lst:
+		var ed: Dictionary = e
+		var ov: Vehicle = ed["vehicle"]
+		if not is_instance_valid(ov):
+			continue
+		var d: float = ed["dist"]
+		if d >= dist:
+			var gap: float = d - dist - (ov.length + 4.5) * 0.5
+			if gap < 0.0:
+				gap = 0.0
+			return { "vehicle": ov, "gap": gap }
+	return null
+
+func _follower_on_lane_at(lane: Lane, dist: float, occ: Dictionary) -> Variant:
+	var lst: Array = occ.get(lane.curve, [])
+	var best: Vehicle = null
+	var best_d: float = -INF
+	for e in lst:
+		var ed: Dictionary = e
+		var ov: Vehicle = ed["vehicle"]
+		if not is_instance_valid(ov):
+			continue
+		var d: float = ed["dist"]
+		if d < dist and d > best_d:
+			best_d = d
+			best = ov
+	if best == null:
+		return null
+	var gap: float = dist - best_d - (best.length + 4.5) * 0.5
+	if gap < 0.0:
+		gap = 0.0
+	return { "vehicle": best, "gap": gap }
+
+func _parallel_distance(v: Vehicle, target: Lane) -> float:
+	return _project_onto_lane(v.global_position, target)
+
+static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
+	var L: float = lane.length
+	if L < 0.1:
+		return 0.0
+	var samples: int = 16
+	var best_d: float = INF
+	var best_t: float = 0.0
+	for i in range(samples + 1):
+		var t: float = float(i) / float(samples)
+		var p: Vector3 = lane.curve.sample_baked(t * L)
+		var d: float = Vector2(p.x - pos.x, p.z - pos.z).length_squared()
+		if d < best_d:
+			best_d = d
+			best_t = t
+	var step: float = 1.0 / float(samples)
+	var lo: float = maxf(best_t - step, 0.0)
+	var hi: float = minf(best_t + step, 1.0)
+	for _i in range(8):
+		var m1: float = lerpf(lo, hi, 1.0 / 3.0)
+		var m2: float = lerpf(lo, hi, 2.0 / 3.0)
+		var p1: Vector3 = lane.curve.sample_baked(m1 * L)
+		var p2: Vector3 = lane.curve.sample_baked(m2 * L)
+		var d1: float = Vector2(p1.x - pos.x, p1.z - pos.z).length_squared()
+		var d2: float = Vector2(p2.x - pos.x, p2.z - pos.z).length_squared()
+		if d1 < d2:
+			hi = m2
+		else:
+			lo = m1
+	return clampf(((lo + hi) * 0.5) * L, 0.0, L)
+
 func _idm(v: float, v0: float, gap: float, lead_speed: float) -> float:
 	if v0 < 0.1:
 		v0 = 0.1
@@ -489,6 +516,8 @@ func _idm(v: float, v0: float, gap: float, lead_speed: float) -> float:
 		interaction = pow(s_star / gap, 2.0)
 	var accel: float = IDM_A * (free_term - interaction)
 	return clampf(accel, IDM_MIN_ACCEL, IDM_A)
+
+# ------------------------------------------------------------------ spawn
 
 func _try_spawn() -> void:
 	if LaneGraph.lanes.is_empty():
@@ -504,24 +533,51 @@ func _try_spawn() -> void:
 	if tgt_idx >= src_idx:
 		tgt_idx += 1
 	var target: RoadNode = dead_ends[tgt_idx]
-	var source_lanes: Array[Lane] = LaneGraph.lanes_departing_from(source)
+
+	var source_lanes: Array = LaneGraph.lanes_departing_from(source)
 	if source_lanes.is_empty():
 		return
-	var start_lane: Lane = source_lanes[0]
-	if not _start_lane_is_clear(start_lane):
+
+	# Pick the emptiest entry lane that has a valid route to the target.
+	var best_lane: Lane = null
+	var best_route: Array = []
+	var best_count: int = 999999
+	for lane_v in source_lanes:
+		var lane: Lane = lane_v
+		var r: Array = LanePathfinder.find_path(lane, target)
+		if r.is_empty():
+			continue
+		var c: int = _count_at_lane_start(lane)
+		if c < best_count:
+			best_count = c
+			best_lane = lane
+			best_route = r
+
+	if best_lane == null:
 		return
-	var path: Array[Lane] = LanePathfinder.find_path(start_lane, target)
-	if path.is_empty():
+	if not _start_lane_is_clear(best_lane):
 		return
-	var steps: Array[PathStep] = _build_steps(path)
+
+	var steps: Array[PathStep] = _build_steps(best_route)
 	if steps.is_empty():
 		return
+
 	var v := Vehicle.new()
 	add_child(v)
 	var v0: float = steps[0].speed
 	v.setup(steps, target, _color_seed, v0)
 	_vehicles.append(v)
 	_color_seed += 1
+
+func _count_at_lane_start(lane: Lane) -> int:
+	var count: int = 0
+	for v in _vehicles:
+		if not is_instance_valid(v):
+			continue
+		if v.current_curve() != lane.curve:
+			continue
+		count += 1
+	return count
 
 func _start_lane_is_clear(lane: Lane) -> bool:
 	for v in _vehicles:
@@ -534,7 +590,7 @@ func _start_lane_is_clear(lane: Lane) -> bool:
 			return false
 	return true
 
-func _build_steps(lanes: Array[Lane]) -> Array[PathStep]:
+func _build_steps(lanes: Array) -> Array[PathStep]:
 	var steps: Array[PathStep] = []
 	for i in range(lanes.size()):
 		var lane: Lane = lanes[i]
@@ -548,8 +604,8 @@ func _build_steps(lanes: Array[Lane]) -> Array[PathStep]:
 					steps.append(PathStep.make(tc, sp, false, null, 0.0, true))
 	return steps
 
-func _dead_end_nodes() -> Array[RoadNode]:
-	var result: Array[RoadNode] = []
+func _dead_end_nodes() -> Array:
+	var result: Array = []
 	for node in RoadGraph.nodes:
 		if node.segment_ends.size() == 1:
 			result.append(node)
