@@ -46,6 +46,10 @@ func _rebuild() -> void:
 func _compute_node_trims() -> Dictionary:
 	var trims: Dictionary = {}
 	for node in RoadGraph.nodes:
+		if node.is_waypoint:
+			# Waypoints are purely structural. No trim, no gap, no junction.
+			trims[node.id] = 0.0
+			continue
 		var ends: Array = node.segment_ends
 		if ends.size() < 2:
 			trims[node.id] = 0.0
@@ -220,10 +224,12 @@ const CONFLICT_DIST: float = 3.5
 const CONFLICT_SAMPLES: int = 30
 
 func _build_conflicts() -> void:
-	# Group incoming lanes by their node.
 	var by_node: Dictionary = {}
 	for lane in lanes:
 		if lane.to_node == null:
+			continue
+		# Waypoints are not junctions. No conflicts there.
+		if lane.to_node.is_waypoint:
 			continue
 		var key: int = lane.to_node.id
 		if not by_node.has(key):

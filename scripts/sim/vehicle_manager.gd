@@ -31,7 +31,6 @@ const JUNCTION_ARRIVAL_COOLDOWN: float = 0.5
 
 const LC_FORWARD_MIN: float = 12.0
 const LC_FORWARD_TIME: float = 1.0
-
 const EMPTY_MARGIN: int = 1
 
 const YIELD_DIST: float = 25.0
@@ -45,6 +44,7 @@ var _tick_counter: int = 0
 var _color_seed: int = 0
 var _rng := RandomNumberGenerator.new()
 var _vehicles: Array[Vehicle] = []
+var _reserved_nodes: Dictionary = {}
 
 func _ready() -> void:
 	_rng.seed = RNG_SEED
@@ -54,6 +54,7 @@ func _on_lanes_changed() -> void:
 	for c in get_children():
 		c.queue_free()
 	_vehicles.clear()
+	_reserved_nodes.clear()
 
 func _process(delta: float) -> void:
 	_prune_dead()
@@ -65,6 +66,7 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	_prune_dead()
 	var occ := _build_occupancy()
+	_compute_reservations()
 	var run_mobil: bool = (_tick_counter % MOBIL_TICK_INTERVAL) == 0
 	_tick_counter += 1
 	_debug_tick += 1
@@ -93,35 +95,6 @@ func _print_debug_summary() -> void:
 			n_trans += 1
 	print("[sim] active=%d lane_steps=%d transitions=%d lateral=%d" % [n_active, n_lane, n_trans, n_lat])
 
-	var printed: int = 0
-	for v in _vehicles:
-		if printed >= 5:
-			break
-		if not is_instance_valid(v):
-			continue
-		var cur: Lane = v.current_lane()
-		if cur == null:
-			print("[sim]  v%d non-lane step idx=%d" % [v.color_seed, v.step_index])
-			printed += 1
-			continue
-		var next_lane: Variant = _next_route_lane(v)
-		var eligible: Array = _eligible_lanes(cur, next_lane)
-		var cnt: int = 0
-		for other in _vehicles:
-			if other == v or not is_instance_valid(other):
-				continue
-			if other.current_curve() == cur.curve:
-				cnt += 1
-		var next_str: String = "null"
-		if next_lane != null:
-			var nl: Lane = next_lane
-			next_str = "%s%d" % [nl.direction, nl.lane_index]
-		print("[sim]  v%d lane=%s%d dist=%.1f room=%.1f cnt_lane=%d eligible=%d next=%s" % [
-			v.color_seed, cur.direction, cur.lane_index,
-			v.distance_on_step, v.current_step_length() - v.distance_on_step,
-			cnt, eligible.size(), next_str])
-		printed += 1
-
 func _prune_dead() -> void:
 	var alive: Array[Vehicle] = []
 	for v in _vehicles:
@@ -148,6 +121,31 @@ func _build_occupancy() -> Dictionary:
 			return a["dist"] < b["dist"])
 	return occ
 
+func _compute_reservations() -> void:
+	_reserved_nodes.clear()
+	var candidates: Dictionary = {}
+	for v in _vehicles:
+		if not is_instance_valid(v):
+			continue
+		if not v.current_step_is_lane():
+			continue
+		var lane: Lane = v.current_lane()
+		if lane == null:
+			continue
+		var node := lane.to_node
+		if node == null:
+			continue
+		if node.is_waypoint:
+			continue
+		var room: float = v.current_step_length() - v.distance_on_step
+		if room > YIELD_COMMIT_DIST:
+			continue
+		var nid: int = node.id
+		if not candidates.has(nid) or room < candidates[nid][0]:
+			candidates[nid] = [room, v]
+	for nid in candidates:
+		_reserved_nodes[nid] = candidates[nid][1]
+
 func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -> void:
 	if not is_instance_valid(v):
 		return
@@ -166,9 +164,8 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float, run_mobil: bool) -
 		if v.avoid_timer <= 0.0:
 			v.avoid_lane = null
 
-	if run_mobil and v.cooldown <= 0.0 and v.current_lane() != null and enable_lane_changes:
-		pass
-		#_maybe_lane_change(v, occ) #disabled
+	if enable_lane_changes and run_mobil and v.cooldown <= 0.0 and v.current_lane() != null:
+		_maybe_lane_change(v, occ)
 
 	var v0: float = v.desired_speed()
 	var leader: Variant = _find_leader(v, occ)
@@ -212,6 +209,16 @@ func _junction_yield_gap(v: Vehicle) -> float:
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room > YIELD_DIST:
 		return -1.0
+	# Waypoints never yield.
+	if node.is_waypoint:
+		return -1.0
+	# Reservation: only the closest vehicle at this node may proceed.
+	var nid: int = node.id
+	if _reserved_nodes.has(nid) and _reserved_nodes[nid] != v:
+		var gap_to_line: float = room - YIELD_OFFSET
+		if gap_to_line < 0.0:
+			gap_to_line = 0.0
+		return gap_to_line
 	var my_lane: Lane = v.current_lane()
 	var conflicts: Array = LaneGraph.conflicting_lanes.get(my_lane, [])
 	if conflicts.is_empty():
@@ -223,10 +230,10 @@ func _junction_yield_gap(v: Vehicle) -> float:
 			break
 	if not any_inside:
 		return -1.0
-	var gap_to_line: float = room - YIELD_OFFSET
-	if gap_to_line < 0.0:
-		gap_to_line = 0.0
-	return gap_to_line
+	var gap_to_line2: float = room - YIELD_OFFSET
+	if gap_to_line2 < 0.0:
+		gap_to_line2 = 0.0
+	return gap_to_line2
 
 func _lane_has_vehicle_inside(lane: Lane) -> bool:
 	for v in _vehicles:
@@ -274,7 +281,7 @@ func _advance(v: Vehicle, move: float) -> void:
 				v.complete_lane_change()
 				v.cooldown = maxf(v.cooldown, JUNCTION_ARRIVAL_COOLDOWN)
 
-# ------------------------------------------------------------------ Direction B: lane choice
+# ------------------------------------------------------------------ Direction B
 
 func _next_route_lane(v: Vehicle) -> Variant:
 	for i in range(v.step_index + 1, v.path.size()):
@@ -319,19 +326,15 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	if current == null:
 		return
 	var next_lane: Variant = _next_route_lane(v)
-	
 	if next_lane == null:
 		return
 	var room: float = v.current_step_length() - v.distance_on_step
 	if room < MIN_LANE_CHANGE_ROOM:
 		return
-
 	var eligible: Array = _eligible_lanes(current, next_lane)
 	if eligible.size() < 2:
 		return
-
 	var my_count: int = _count_on_lane(current, occ, v)
-
 	var best: Lane = current
 	var best_count: int = my_count
 	for lane_v in eligible:
@@ -342,28 +345,18 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 		if c < best_count:
 			best_count = c
 			best = l
-
 	if best == current:
 		return
 	if best == v.avoid_lane:
 		return
 	if my_count - best_count < EMPTY_MARGIN:
 		return
-
-	if debug_lane_changes and (debug_vehicle_seed < 0 or debug_vehicle_seed == v.color_seed):
-		print("[lc] v%d seg=%d cur=%d cnt=%d -> tgt=%d cnt=%d" % [
-			v.color_seed, current.segment.get_instance_id(),
-			current.lane_index, my_count,
-			best.lane_index, best_count])
-
 	if not _change_safe(v, best, occ):
 		return
-
 	_execute_lane_change(v, best)
 
 func _change_safe(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
 	var p_par: float = _project_onto_lane(v.global_position, target)
-
 	var tgt_lead: Variant = _leader_on_lane_at(target, p_par, occ)
 	if tgt_lead != null:
 		var li: Dictionary = tgt_lead
@@ -377,7 +370,6 @@ func _change_safe(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
 		var a_L_new: float = _idm(lv.speed, lv.desired_speed(), lgap, v.speed)
 		if a_L_new < -B_SAFE:
 			return false
-
 	var tgt_fol: Variant = _follower_on_lane_at(target, p_par, occ)
 	if tgt_fol != null:
 		var fi: Dictionary = tgt_fol
@@ -408,7 +400,6 @@ func _execute_lane_change(v: Vehicle, target_lane: Lane) -> void:
 	if lc_len < 6.0:
 		return
 	var target_off: float = p_par + lc_len
-
 	var remaining: Array = _remaining_lanes(v)
 	if remaining.is_empty():
 		return
@@ -569,6 +560,29 @@ func _idm(v: float, v0: float, gap: float, lead_speed: float) -> float:
 
 # ------------------------------------------------------------------ spawn
 
+func _align_exit_lane(route: Array, target: RoadNode, pref_idx: int) -> Array:
+	if route.size() < 2:
+		return route
+	var last: Lane = route[route.size() - 1]
+	if last.lane_index == pref_idx:
+		return route
+	var second_last: Lane = route[route.size() - 2]
+	for lane in LaneGraph.lanes:
+		if lane.segment != last.segment:
+			continue
+		if lane.direction != last.direction:
+			continue
+		if lane.to_node != target:
+			continue
+		if lane.lane_index != pref_idx:
+			continue
+		if not second_last.next_curves.has(lane):
+			continue
+		var new_route: Array = route.duplicate()
+		new_route[new_route.size() - 1] = lane
+		return new_route
+	return route
+
 func _try_spawn() -> void:
 	if LaneGraph.lanes.is_empty():
 		return
@@ -606,6 +620,7 @@ func _try_spawn() -> void:
 		return
 	if not _start_lane_is_clear(best_lane):
 		return
+	best_route = _align_exit_lane(best_route, target, best_lane.lane_index)
 
 	var steps: Array[PathStep] = _build_steps(best_route)
 	if steps.is_empty():
