@@ -1,7 +1,7 @@
 class_name VehicleManager
 extends Node3D
 
-@export var spawn_interval: float = 0.2 #1.0
+@export var spawn_interval: float = 0.5 #1.0
 @export var spawn_clear_distance: float = 10.0
 @export var max_vehicles: int = 200
 @export var enable_lane_changes: bool = false
@@ -19,25 +19,25 @@ const ACCEL: float = 7.0            # m/s^2
 const DECEL: float = 7.0            # m/s^2, applied as negative
 
 # Car following
-const DF_C1: float = 1.0            # closing-rate coefficient
+const DF_C1: float = 0.5            # closing-rate coefficient
 const DF_C2: float = 0.5            # headway coefficient
-const DF_C3: float = 2.0            # jam gap
-const DF_BAND: float = 3.0          # hysteresis band
-const TARGET_MARGIN: float = 3.0    # m/s below leader when too close
+const DF_C3: float = 1.0            # jam gap
+const DF_BAND: float = 1.0          # hysteresis band
+const TARGET_MARGIN: float = 2.0    # m/s below leader when too close
 
 # Lane change
-const LC_BACK_C1: float = 1.0
-const LC_BACK_C2: float = 8.0
-const LC_FWD_C1: float = 1.0
+const LC_BACK_C1: float = 0.7
+const LC_BACK_C2: float = 5.0
+const LC_FWD_C1: float = 0.7
 const LC_FWD_C2: float = 6.0
 const LC_COOLDOWN_RETURN: float = 3.0
 const LC_COOLDOWN_ONWARD: float = 0.2
-const LC_FORWARD_MIN: float = 12.0
-const LC_FORWARD_TIME: float = 1.0
+const LC_FORWARD_MIN: float = 9.0
+const LC_FORWARD_TIME: float = 0.7
 
 # Junction
-const APPROACH_DIST: float = 25.0
-const COMMIT_DIST: float = 5.0
+const APPROACH_DIST: float = 15.0
+const COMMIT_DIST: float = 3.0
 const CLEARANCE: float = 8.0
 const JUNC_APPROACH_SPEED: float = 7.0     # ~25 kph
 const JUNC_COMMIT_SPEED: float = 5.5       # ~20 kph
@@ -46,7 +46,7 @@ const JUNC_COMMIT_SPEED: float = 5.5       # ~20 kph
 const STUCK_TIME: float = 8.0
 const STUCK_NUDGE_SPEED: float = 2.0
 const NUDGE_CLEAR_GAP: float = 5.0
-const JUNCTION_ARRIVAL_COOLDOWN: float = 0.5
+const JUNCTION_ARRIVAL_COOLDOWN: float = 0.1
 
 var _timer: float = 0.0
 var _color_seed: int = 0
