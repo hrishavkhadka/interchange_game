@@ -1,10 +1,10 @@
 class_name VehicleManager
 extends Node3D
 
-@export var spawn_interval: float = 0.5 #1.0
+@export var spawn_interval: float = 0.4
 @export var spawn_clear_distance: float = 10.0
 @export var max_vehicles: int = 200
-@export var enable_lane_changes: bool = false
+@export var enable_lane_changes: bool = true
 
 var debug_lane_changes: bool = false
 var debug_vehicle_seed: int = -1
@@ -14,33 +14,33 @@ const RNG_SEED: int = 987654321
 const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
 
 # Motion
-const MAX_SPEED: float = 14.0       # m/s, ~50 kph
-const ACCEL: float = 7.0            # m/s^2
-const DECEL: float = 7.0            # m/s^2, applied as negative
+const MAX_SPEED: float = 14.0
+const ACCEL: float = 7.0
+const DECEL: float = 7.0
 
 # Car following
-const DF_C1: float = 0.5            # closing-rate coefficient
-const DF_C2: float = 0.5            # headway coefficient
-const DF_C3: float = 1.0            # jam gap
-const DF_BAND: float = 1.0          # hysteresis band
-const TARGET_MARGIN: float = 2.0    # m/s below leader when too close
+const DF_C1: float = 0.5
+const DF_C2: float = 0.5
+const DF_C3: float = 1.0
+const DF_BAND: float = 1.0
+const TARGET_MARGIN: float = 2.0
 
 # Lane change
-const LC_BACK_C1: float = 0.7
+const LC_BACK_C1: float = 1.0
 const LC_BACK_C2: float = 5.0
 const LC_FWD_C1: float = 0.7
 const LC_FWD_C2: float = 6.0
 const LC_COOLDOWN_RETURN: float = 3.0
-const LC_COOLDOWN_ONWARD: float = 0.2
-const LC_FORWARD_MIN: float = 9.0
-const LC_FORWARD_TIME: float = 0.7
+const LC_COOLDOWN_ONWARD: float = 0.0
+const LC_FORWARD_MIN: float = 10.0
+const LC_FORWARD_TIME: float = 0.8
 
 # Junction
 const APPROACH_DIST: float = 15.0
 const COMMIT_DIST: float = 3.0
 const CLEARANCE: float = 8.0
-const JUNC_APPROACH_SPEED: float = 7.0     # ~25 kph
-const JUNC_COMMIT_SPEED: float = 5.5       # ~20 kph
+const JUNC_APPROACH_SPEED: float = 7.0
+const JUNC_COMMIT_SPEED: float = 5.5
 
 # Safety
 const STUCK_TIME: float = 8.0
@@ -128,8 +128,6 @@ func _build_occupancy() -> Dictionary:
 			return a["dist"] < b["dist"])
 	return occ
 
-# ---------------------------------------------------------------- arc claims
-
 func _compute_arc_claims(occ: Dictionary) -> void:
 	_arc_claims.clear()
 	for v in _vehicles:
@@ -183,13 +181,10 @@ func _lane_l_clear(lane: Lane, occ: Dictionary) -> bool:
 			return false
 	return true
 
-# ---------------------------------------------------------------- step
-
 func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float) -> void:
 	if not is_instance_valid(v):
 		return
 
-	# Stuck handling.
 	if v.speed < Vehicle.STUCK_SPEED:
 		v.stuck_timer += delta
 		if v.current_step_is_lateral():
@@ -205,27 +200,20 @@ func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float) -> void:
 	else:
 		v.stuck_timer = 0.0
 
-	# Cooldowns.
 	v.cooldown = maxf(0.0, v.cooldown - delta)
 	if v.avoid_timer > 0.0:
 		v.avoid_timer = maxf(0.0, v.avoid_timer - delta)
 		if v.avoid_timer <= 0.0:
 			v.avoid_lane = null
 
-	# Lane change check.
 	if enable_lane_changes and v.cooldown <= 0.0 and v.current_lane() != null:
 		_maybe_lane_change(v, occ)
 
-	# Target speed from car following.
 	var leader: Variant = _find_leader(v, occ)
 	var target_from_leader: float = _compute_car_following_target(v, leader)
-
-	# Junction cap.
 	var junc_cap: float = _junction_cap(v, occ)
-
 	var target_speed: float = minf(target_from_leader, junc_cap)
 
-	# Apply constant accel/decel toward target.
 	var accel: float = 0.0
 	if target_speed > v.speed:
 		accel = ACCEL
@@ -241,13 +229,11 @@ func _compute_car_following_target(v: Vehicle, leader: Variant) -> float:
 	var info: Dictionary = leader
 	var lv: Vehicle = info["vehicle"]
 	var gap: float = info["gap"]
-
 	var self_speed: float = v.speed
 	var lead_speed: float = lv.speed
 	var df: float = (self_speed - lead_speed) * DF_C1 \
 		+ maxf(self_speed, lead_speed) * DF_C2 \
 		+ DF_C3
-
 	if gap > df + DF_BAND:
 		return MAX_SPEED
 	if gap < df - DF_BAND:
@@ -263,17 +249,13 @@ func _junction_cap(v: Vehicle, occ: Dictionary) -> float:
 	var nxt := _next_arc(v)
 	if nxt == null:
 		return MAX_SPEED
-	# Already claimed by my lane: committed, no cap.
 	if _arc_claims.has(nxt) and _arc_claims[nxt] == v.current_lane():
 		return MAX_SPEED
-	# Blocked by a conflicting arc claim.
 	for other in nxt.conflicting_arcs:
 		if _arc_claims.has(other):
 			return 0.0
-	# Destination lane is packed.
 	if not _lane_l_clear(nxt.to_lane, occ):
 		return 0.0
-	# No conflicting claims, but conflicts exist: cautious approach.
 	if nxt.conflicting_arcs.size() > 0:
 		return JUNC_APPROACH_SPEED
 	return MAX_SPEED
@@ -308,13 +290,13 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	var current: Lane = v.current_lane()
 	if current == null:
 		return
-	var next_lane: Variant = _next_route_lane(v)
-	if next_lane == null:
+	# Only change when the current lane is actually holding us back.
+	if not _is_constrained(v, occ):
 		return
+	var next_lane: Variant = _next_route_lane(v)
 	var eligible: Array = _eligible_lanes(current, next_lane)
 	if eligible.size() < 2:
 		return
-
 	for lane_v in eligible:
 		var target: Lane = lane_v
 		if target == current:
@@ -324,6 +306,19 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 		if _change_ok(v, target, occ):
 			_execute_lane_change(v, target)
 			return
+
+# Is the vehicle currently being constrained by a leader in its own lane?
+func _is_constrained(v: Vehicle, occ: Dictionary) -> bool:
+	var leader: Variant = _find_leader(v, occ)
+	if leader == null:
+		return false
+	var info: Dictionary = leader
+	var lv: Vehicle = info["vehicle"]
+	var gap: float = info["gap"]
+	var df: float = (v.speed - lv.speed) * DF_C1 \
+		+ maxf(v.speed, lv.speed) * DF_C2 \
+		+ DF_C3
+	return gap < df + DF_BAND
 
 func _eligible_lanes(current: Lane, next_lane: Variant) -> Array:
 	var result: Array = []
@@ -352,7 +347,6 @@ func _next_route_lane(v: Vehicle) -> Variant:
 
 func _change_ok(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
 	var p_par: float = _project_onto_lane(v.global_position, target)
-	# Forward gap on target.
 	var lead: Variant = _leader_on_lane_at(target, p_par, occ)
 	var lead_speed: float = 0.0
 	if lead != null:
@@ -362,7 +356,6 @@ func _change_ok(v: Vehicle, target: Lane, occ: Dictionary) -> bool:
 		var fwd_required: float = maxf(v.speed, lead_speed) * LC_FWD_C1 + LC_FWD_C2
 		if li["gap"] < fwd_required:
 			return false
-	# Backward gap on target.
 	var fol: Variant = _follower_on_lane_at(target, p_par, occ)
 	if fol != null:
 		var fi: Dictionary = fol
@@ -419,7 +412,7 @@ func _build_steps_from_offset(lanes: Array, offset: float) -> Array[PathStep]:
 					steps.append(PathStep.make(arc.curve, sp, false, null, 0.0, arc))
 	return steps
 
-# ---------------------------------------------------------------- helpers
+# ---------------------------------------------------------------- leader / helpers
 
 func _find_leader(v: Vehicle, occ: Dictionary) -> Variant:
 	var c := v.current_curve()
