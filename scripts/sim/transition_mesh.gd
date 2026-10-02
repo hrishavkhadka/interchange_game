@@ -21,6 +21,7 @@ func _ready() -> void:
 func _rebuild() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var drawn: int = 0
 	for arc in LaneGraph.arcs:
 		var c: Curve3D = arc.curve
 		if c == null:
@@ -33,7 +34,9 @@ func _rebuild() -> void:
 		var d_hw: float = arc.to_lane.segment.road_type.lane_width * 0.5
 		var hw: float = minf(lane_hw, d_hw)
 		_build_ribbon(st, c, hw)
+		drawn += 1
 	_mesh.mesh = st.commit()
+	print("[transition_mesh] drew %d ribbons" % drawn)
 
 func _build_ribbon(st: SurfaceTool, c: Curve3D, half_width: float) -> void:
 	var length: float = c.get_baked_length()

@@ -5,6 +5,7 @@ const SAMPLES_PER_METER := 0.5
 const MIN_SAMPLES := 8
 const SURFACE_LIFT := 0.02
 const VISUAL_INSET := 1.5
+const DELTA := 0.05
 
 static func build_slab(curve: Curve3D, rt: RoadType, start_inset: float = 0.0, end_inset: float = 0.0) -> ArrayMesh:
 	var length := curve.get_baked_length()
@@ -25,11 +26,24 @@ static func build_slab(curve: Curve3D, rt: RoadType, start_inset: float = 0.0, e
 		var offset := start_inset + t * usable
 		var pos := curve.sample_baked(offset)
 		pos.y += SURFACE_LIFT
-		var ahead := curve.sample_baked(minf(offset + 0.05, length))
-		ahead.y += SURFACE_LIFT
-		var tan := ahead - pos
+
+		# Centered-difference tangent. Well-defined at both ends. Falls back
+		# to forward or backward difference only if the two neighbours
+		# coincide, which only happens if the curve has zero length.
+		var prev_off: float = maxf(offset - DELTA, 0.0)
+		var next_off: float = minf(offset + DELTA, length)
+		var prev_p: Vector3 = curve.sample_baked(prev_off)
+		var next_p: Vector3 = curve.sample_baked(next_off)
+		prev_p.y += SURFACE_LIFT
+		next_p.y += SURFACE_LIFT
+		var tan: Vector3 = next_p - prev_p
+		if tan.length_squared() < 0.0001:
+			tan = next_p - pos
+		if tan.length_squared() < 0.0001:
+			tan = pos - prev_p
 		if tan.length_squared() < 0.0001:
 			tan = Vector3.FORWARD
+
 		positions[i] = pos
 		tangents[i] = tan.normalized()
 

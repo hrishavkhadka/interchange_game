@@ -13,10 +13,10 @@ func _ready() -> void:
 func _rebuild() -> void:
 	for c in get_children():
 		c.queue_free()
+	var drawn: int = 0
 	for node in RoadGraph.nodes:
 		if node.segment_ends.size() < 2:
 			continue
-		# Pure waypoints (2 segments, flagged) do not form a junction.
 		if node.is_waypoint and node.segment_ends.size() == 2:
 			continue
 		var mesh := JunctionMesh.build(node)
@@ -26,3 +26,5 @@ func _rebuild() -> void:
 		mi.mesh = mesh
 		mi.material_override = _material
 		add_child(mi)
+		drawn += 1
+	print("[junction_renderer] drew %d patches" % drawn)
