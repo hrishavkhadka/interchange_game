@@ -52,9 +52,19 @@ func _rebuild() -> void:
 	if road_type == null or curve == null:
 		return
 	var L := curve.get_baked_length()
-	var inset: float = minf(RoadMesh.VISUAL_INSET, L / 3.0)
-	var mesh := RoadMesh.build_slab(curve, road_type, inset, inset)
+	var inset_start: float = 0.0
+	var inset_end: float = 0.0
+	if not _is_pure_waypoint(start_node):
+		inset_start = minf(RoadMesh.VISUAL_INSET, L / 3.0)
+	if not _is_pure_waypoint(end_node):
+		inset_end = minf(RoadMesh.VISUAL_INSET, L / 3.0)
+	var mesh := RoadMesh.build_slab(curve, road_type, inset_start, inset_end)
 	_mesh_instance.mesh = mesh
+
+static func _is_pure_waypoint(node: RoadNode) -> bool:
+	if node == null:
+		return false
+	return node.is_waypoint and node.segment_ends.size() == 2
 
 func _ensure_mesh_instance() -> void:
 	if _mesh_instance != null:

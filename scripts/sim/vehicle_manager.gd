@@ -15,14 +15,14 @@ const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
 
 # Motion
 const MAX_SPEED: float = 14.0       # m/s, ~50 kph
-const ACCEL: float = 5.0            # m/s^2
-const DECEL: float = 5.0            # m/s^2, applied as negative
+const ACCEL: float = 7.0            # m/s^2
+const DECEL: float = 7.0            # m/s^2, applied as negative
 
 # Car following
-const DF_C1: float = 0.5            # closing-rate coefficient
-const DF_C2: float = 1.2            # headway coefficient
-const DF_C3: float = 6.0            # jam gap
-const DF_BAND: float = 5.0          # hysteresis band
+const DF_C1: float = 1.0            # closing-rate coefficient
+const DF_C2: float = 0.5            # headway coefficient
+const DF_C3: float = 2.0            # jam gap
+const DF_BAND: float = 3.0          # hysteresis band
 const TARGET_MARGIN: float = 3.0    # m/s below leader when too close
 
 # Lane change
