@@ -1,7 +1,7 @@
 class_name VehicleManager
 extends Node3D
 
-@export var spawn_interval: float = 1.0
+@export var spawn_interval: float = 0.2 #1.0
 @export var spawn_clear_distance: float = 10.0
 @export var max_vehicles: int = 200
 @export var enable_lane_changes: bool = false

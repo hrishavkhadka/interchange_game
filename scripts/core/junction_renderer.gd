@@ -16,6 +16,9 @@ func _rebuild() -> void:
 	for node in RoadGraph.nodes:
 		if node.segment_ends.size() < 2:
 			continue
+		# Pure waypoints (2 segments, flagged) do not form a junction.
+		if node.is_waypoint and node.segment_ends.size() == 2:
+			continue
 		var mesh := JunctionMesh.build(node)
 		if mesh == null:
 			continue
