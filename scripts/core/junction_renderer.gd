@@ -17,7 +17,7 @@ func _rebuild() -> void:
 	for node in RoadGraph.nodes:
 		if node.segment_ends.size() < 2:
 			continue
-		if node.is_waypoint and node.segment_ends.size() == 2:
+		if node.is_pass_through():
 			continue
 		var mesh := JunctionMesh.build(node)
 		if mesh == null:

@@ -28,7 +28,7 @@ func _rebuild() -> void:
 			continue
 		if arc.length < MIN_LENGTH:
 			continue
-		if arc.node != null and arc.node.is_waypoint and arc.node.segment_ends.size() == 2:
+		if arc.node != null and arc.node.is_pass_through():
 			continue
 		var lane_hw: float = arc.from_lane.segment.road_type.lane_width * 0.5
 		var d_hw: float = arc.to_lane.segment.road_type.lane_width * 0.5

@@ -70,7 +70,7 @@ func _do_rebuild() -> void:
 static func _is_pure_waypoint(node: RoadNode) -> bool:
 	if node == null:
 		return false
-	return node.is_waypoint and node.segment_ends.size() == 2
+	return node.is_pass_through()
 
 func _ensure_mesh_instance() -> void:
 	if _mesh_instance != null:
