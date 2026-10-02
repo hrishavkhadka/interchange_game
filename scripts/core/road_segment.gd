@@ -8,20 +8,17 @@ var end_node: RoadNode
 
 var _mesh_instance: MeshInstance3D
 var _material: StandardMaterial3D
-var _rebuild_pending: bool = false
-
-func _ready() -> void:
-	RoadGraph.graph_changed.connect(_on_graph_changed)
-	_do_rebuild()
 
 func setup(rt: RoadType, c: Curve3D) -> void:
 	road_type = rt
 	curve = c
-	# Synchronous build on setup so previews (which don't see graph_changed)
-	# still render. For real segments this runs before add_child, so it is a
-	# no-op; _ready then performs the actual build.
-	if is_inside_tree():
-		_do_rebuild()
+	_do_rebuild()
+
+# Called by the builder after adding or removing an endpoint at either end.
+# The mesh's insets depend on the current segment_ends size at each node,
+# so this must be re-run when the graph topology changes at a node.
+func rebuild_now() -> void:
+	_do_rebuild()
 
 func length() -> float:
 	if curve == null:
@@ -56,18 +53,7 @@ func set_preview_validity(valid: bool) -> void:
 	else:
 		_material.albedo_color = Color(0.68, 0.15, 0.15)
 
-func _on_graph_changed() -> void:
-	if _rebuild_pending:
-		return
-	_rebuild_pending = true
-	call_deferred("_do_rebuild")
-
 func _do_rebuild() -> void:
-	_rebuild_pending = false
-	if not is_inside_tree():
-		return
-	if is_queued_for_deletion():
-		return
 	_ensure_mesh_instance()
 	if road_type == null or curve == null:
 		return
