@@ -2,13 +2,16 @@ extends Node3D
 
 var _builder: RoadBuilder
 var _vehicles: VehicleManager
+var _junction_editor: JunctionEditor
 
 func _ready() -> void:
 	_setup_environment()
 	_setup_light()
 	_setup_ground()
 	var camera := _setup_camera()
+
 	_builder = _setup_builder(camera)
+
 	var hud := _setup_hud()
 	_builder.cost_changed.connect(hud.set_cost)
 	_builder.road_type_changed.connect(func(_idx: int, name: String) -> void:
@@ -36,6 +39,10 @@ func _ready() -> void:
 	_vehicles.name = "VehicleManager"
 	add_child(_vehicles)
 
+	_junction_editor = JunctionEditor.new()
+	_junction_editor.name = "JunctionEditor"
+	add_child(_junction_editor)
+
 	var snap_toolbar := SnapToolbar.new()
 	snap_toolbar.name = "SnapToolbar"
 	snap_toolbar.setup(_builder.settings)
@@ -46,9 +53,17 @@ func _ready() -> void:
 	add_child(main_toolbar)
 
 	var snap_expanded: bool = false
+
 	main_toolbar.mode_requested.connect(func(m: int) -> void:
-		_builder.set_mode(m)
+		print("[main] mode_requested ", m)
+		if m == 3:
+			_builder.set_mode(0)
+			_junction_editor.set_active(true)
+		else:
+			_junction_editor.set_active(false)
+			_builder.set_mode(m)
 		snap_toolbar.set_expanded(snap_expanded and m == 1))
+
 	main_toolbar.snapping_toggled.connect(func(on: bool) -> void:
 		snap_expanded = on
 		snap_toolbar.set_expanded(on and main_toolbar.get_mode() == 1))
