@@ -65,6 +65,12 @@ func _input(event: InputEvent) -> void:
 			KEY_2: _builder.set_road_type_index(1)
 			KEY_3: _builder.set_road_type_index(2)
 			KEY_4: _builder.set_road_type_index(3)
+			KEY_5: _builder.set_road_type_index(4)
+			KEY_6: _builder.set_road_type_index(5)
+			KEY_7: _builder.set_road_type_index(6)
+			KEY_8: _builder.set_road_type_index(7)
+			KEY_9: _builder.set_road_type_index(8)
+			KEY_0: _builder.set_road_type_index(9)
 			KEY_K:
 				_vehicles.debug_lane_changes = not _vehicles.debug_lane_changes
 				print("[debug] lane-change logging = ", _vehicles.debug_lane_changes)

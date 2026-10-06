@@ -23,7 +23,7 @@ func _ready() -> void:
 	vbox.add_child(_road_type_label)
 
 	_hint_label = Label.new()
-	_hint_label.text = "LMB: place road (click, click)\nRMB: cancel\nEsc: cancel\n1/2/3/4: road type\nL: lane overlay\nWASD: pan  QE: yaw  RF: tilt  TG: zoom"
+	_hint_label.text = "_hint_label.text = \"LMB: place road (click, click)\\nRMB: cancel\\nEsc: cancel\\n1-9/0: road type\\nL: lane overlay\\nWASD: pan  QE: yaw  RF: tilt  TG: zoom\""
 	_hint_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8))
 	vbox.add_child(_hint_label)
 

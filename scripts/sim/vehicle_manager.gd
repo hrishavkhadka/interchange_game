@@ -43,10 +43,10 @@ const JUNC_APPROACH_SPEED: float = 7.0
 const JUNC_COMMIT_SPEED: float = 5.5
 
 # Safety
-const STUCK_TIME: float = 8.0
+const STUCK_TIME: float = 5.0
 const STUCK_NUDGE_SPEED: float = 2.0
-const NUDGE_CLEAR_GAP: float = 5.0
-const JUNCTION_ARRIVAL_COOLDOWN: float = 0.1
+const NUDGE_CLEAR_GAP: float = 4.0
+const JUNCTION_ARRIVAL_COOLDOWN: float = 0.0
 
 var _timer: float = 0.0
 var _color_seed: int = 0
@@ -153,7 +153,12 @@ func _compute_arc_claims(occ: Dictionary) -> void:
 				blocked = true
 				break
 		if blocked:
-			continue
+			var alt := _find_alternate_arc(v, nxt, occ)
+			if alt != null:
+				_splice_alternate_arc(v, alt)
+				nxt = alt
+			else:
+				continue
 		_arc_claims[nxt] = nxt.from_lane
 
 func _current_arc(v: Vehicle) -> LaneArc:
@@ -642,3 +647,57 @@ func _dead_end_nodes() -> Array:
 		if node.segment_ends.size() == 1:
 			result.append(node)
 	return result
+
+# Look for another arc from the same source lane to a different lane on the
+# same destination segment, whose conflicts are all unclaimed. Returns the
+# arc, or null if none is available.
+func _find_alternate_arc(v: Vehicle, blocked_arc: LaneArc, occ: Dictionary) -> LaneArc:
+	var from_lane: Lane = blocked_arc.from_lane
+	var dest_segment = blocked_arc.to_lane.segment
+	var dest_dir: String = blocked_arc.to_lane.direction
+	for next_lane_v in from_lane.next_arcs:
+		var next_lane: Lane = next_lane_v
+		if next_lane == blocked_arc.to_lane:
+			continue
+		if next_lane.segment != dest_segment:
+			continue
+		if next_lane.direction != dest_dir:
+			continue
+		var alt: LaneArc = from_lane.next_arcs[next_lane]
+		if alt == null or alt.length < 0.05:
+			continue
+		if not _lane_l_clear(next_lane, occ):
+			continue
+		var alt_blocked: bool = false
+		for other in alt.conflicting_arcs:
+			if _arc_claims.has(other):
+				alt_blocked = true
+				break
+		if alt_blocked:
+			continue
+		return alt
+	return null
+
+# Swap the vehicle's path so that it now enters `new_arc` instead of its
+# previously planned arc, and re-routes from the new destination lane
+# onward. Silently does nothing if a route from the new lane cannot be
+# found.
+func _splice_alternate_arc(v: Vehicle, new_arc: LaneArc) -> void:
+	var new_route: Array = LanePathfinder.find_path(new_arc.to_lane, v.target_node)
+	if new_route.is_empty():
+		return
+	var kept: Array[PathStep] = []
+	for i in range(v.step_index + 1):
+		kept.append(v.path[i])
+	var new_steps: Array[PathStep] = []
+	var arc_speed: float = minf(new_arc.from_lane.speed_limit, new_arc.to_lane.speed_limit)
+	new_steps.append(PathStep.make(new_arc.curve, arc_speed, false, null, 0.0, new_arc))
+	var route_steps := _build_steps(new_route)
+	for s in route_steps:
+		new_steps.append(s)
+	var result: Array[PathStep] = []
+	for s in kept:
+		result.append(s)
+	for s in new_steps:
+		result.append(s)
+	v.path = result

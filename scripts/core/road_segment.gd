@@ -9,6 +9,9 @@ var end_node: RoadNode
 var _mesh_instance: MeshInstance3D
 var _material: StandardMaterial3D
 
+var _base_color: Color = Color(0.22, 0.22, 0.25)
+var _hovered: bool = false
+
 func setup(rt: RoadType, c: Curve3D) -> void:
 	road_type = rt
 	curve = c
@@ -18,6 +21,9 @@ func setup(rt: RoadType, c: Curve3D) -> void:
 # The mesh's insets depend on the current segment_ends size at each node,
 # so this must be re-run when the graph topology changes at a node.
 func rebuild_now() -> void:
+	_do_rebuild()
+	
+func rebuild_mesh() -> void:
 	_do_rebuild()
 
 func length() -> float:
@@ -48,10 +54,24 @@ func cost() -> float:
 func set_preview_validity(valid: bool) -> void:
 	if _material == null:
 		return
+	if _hovered:
+		return
 	if valid:
-		_material.albedo_color = Color(0.22, 0.22, 0.25)
+		_material.albedo_color = _base_color
 	else:
 		_material.albedo_color = Color(0.68, 0.15, 0.15)
+		
+func set_hovered(on: bool) -> void:
+	_hovered = on
+	if _material == null:
+		return
+	if on:
+		_material.albedo_color = Color(0.85, 0.35, 0.15)
+	else:
+		_material.albedo_color = _base_color
+		
+func is_hovered() -> bool:
+	return _hovered
 
 func _do_rebuild() -> void:
 	_ensure_mesh_instance()
@@ -77,7 +97,7 @@ func _ensure_mesh_instance() -> void:
 		return
 	_mesh_instance = MeshInstance3D.new()
 	_material = StandardMaterial3D.new()
-	_material.albedo_color = Color(0.22, 0.22, 0.25)
+	_material.albedo_color = _base_color
 	_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_material.roughness = 0.95
