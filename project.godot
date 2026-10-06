@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 
 RoadGraph="*uid://0kp1norpbk46"
 LaneGraph="*uid://dci64qqh8ukn8"
+ArcOverrides="*uid://djm5edq15p388"
 
 [debug]
 

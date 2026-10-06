@@ -17,7 +17,7 @@ func _ready() -> void:
 	panel.anchor_top = 1.0
 	panel.anchor_bottom = 1.0
 	panel.offset_left = 16
-	panel.offset_right = 426
+	panel.offset_right = 526
 	panel.offset_top = -64
 	panel.offset_bottom = -16
 	add_child(panel)
@@ -26,9 +26,10 @@ func _ready() -> void:
 	row.add_theme_constant_override("separation", 4)
 	panel.add_child(row)
 
-	_add_mode_button(row, "Cursor", 0, "Pointer mode - inspect and select")
+	_add_mode_button(row, "Cursor", 0, "Pointer mode")
 	_add_mode_button(row, "Roads", 1, "Road building mode")
-	_add_mode_button(row, "Demolish", 2, "Demolish mode - click a road to remove it")
+	_add_mode_button(row, "Demolish", 2, "Demolish mode")
+	_add_mode_button(row, "Junction", 3, "Edit lane connections at a junction")
 
 	var sep := VSeparator.new()
 	row.add_child(sep)

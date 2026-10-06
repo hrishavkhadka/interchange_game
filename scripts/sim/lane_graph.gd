@@ -2,21 +2,16 @@ extends Node
 
 signal lanes_changed
 
-# Arcs from the node rebuild.
-var arcs: Array = []                    # Array[LaneArc]
-var arcs_by_from_lane: Dictionary = {}  # Lane -> Array[LaneArc]
-
-# Lane-level conflicts. Kept for the current yield system; will be removed
-# when the reservation model replaces yield in Stage B.
+var arcs: Array = []
+var arcs_by_from_lane: Dictionary = {}
+var arcs_by_node: Dictionary = {}
 var conflicting_lanes: Dictionary = {}
-
-# Arcs by node id, useful for iterating conflicts.
-var arcs_by_node: Dictionary = {}       # node id -> Array[LaneArc]
 
 var lanes: Array[Lane] = []
 
 func _ready() -> void:
 	RoadGraph.graph_changed.connect(_rebuild)
+	ArcOverrides.overrides_changed.connect(_rebuild)
 
 func _rebuild() -> void:
 	lanes.clear()
@@ -41,15 +36,13 @@ func _rebuild() -> void:
 			if lane != null:
 				lanes.append(lane)
 
-	_build_connections()
 	_build_arcs()
+	_build_connections_from_arcs()
 	_build_adjacency()
 	_build_lane_conflicts()
 	_build_arc_conflicts()
 
 	lanes_changed.emit()
-
-# ---------------------------------------------------------------- node trims
 
 func _compute_node_trims() -> Dictionary:
 	var trims: Dictionary = {}
@@ -101,8 +94,6 @@ static func _outward_dir(seg: RoadSegment, is_start: bool, node: RoadNode) -> Ve
 		return Vector3.ZERO
 	return d.normalized()
 
-# ---------------------------------------------------------------- lanes
-
 func _make_lane(seg: RoadSegment, lane_index: int, direction: String, start_trim: float, end_trim: float) -> Lane:
 	var curve := LaneBuilder.build_lane_curve(seg.curve, seg.road_type, lane_index, direction, start_trim, end_trim)
 	if curve == null:
@@ -122,70 +113,34 @@ func _make_lane(seg: RoadSegment, lane_index: int, direction: String, start_trim
 	lane.speed_limit = seg.road_type.speed_limit_kmh / 3.6
 	return lane
 
-func _build_connections() -> void:
-	var by_from: Dictionary = {}
-	for lane in lanes:
-		if lane.from_node == null:
-			continue
-		var key: int = lane.from_node.id
-		if not by_from.has(key):
-			by_from[key] = []
-		by_from[key].append(lane)
-
-	for arriving in lanes:
-		arriving.next_lanes.clear()
-		arriving.prev_lanes.clear()
-
-	for arriving in lanes:
-		var node := arriving.to_node
-		if node == null:
-			continue
-		var departing_list: Array = by_from.get(node.id, [])
-		for d in departing_list:
-			var departing: Lane = d
-			if departing.segment == arriving.segment:
-				continue
-			arriving.next_lanes.append(departing)
-			departing.prev_lanes.append(arriving)
-
-func _build_adjacency() -> void:
-	for lane in lanes:
-		lane.adjacent_lanes.clear()
-	var by_segment: Dictionary = {}
-	for lane in lanes:
-		var key: int = lane.segment.get_instance_id()
-		if not by_segment.has(key):
-			by_segment[key] = []
-		by_segment[key].append(lane)
-	for key in by_segment:
-		var group: Array = by_segment[key]
-		for i in group.size():
-			for j in range(i + 1, group.size()):
-				var a: Lane = group[i]
-				var b: Lane = group[j]
-				if a.direction != b.direction:
-					continue
-				if absi(a.lane_index - b.lane_index) != 1:
-					continue
-				a.adjacent_lanes.append(b)
-				b.adjacent_lanes.append(a)
-
-# ---------------------------------------------------------------- arcs
-
 func _build_arcs() -> void:
 	for lane in lanes:
 		lane.next_arcs.clear()
 		lane.prev_arcs.clear()
 
+	var by_from_node: Dictionary = {}
+	for lane in lanes:
+		if lane.from_node == null:
+			continue
+		var nid: int = lane.from_node.id
+		if not by_from_node.has(nid):
+			by_from_node[nid] = []
+		by_from_node[nid].append(lane)
+
 	for arriving in lanes:
 		if arriving.to_node == null:
 			continue
 		var node: RoadNode = arriving.to_node
-		for departing in arriving.next_lanes:
+		var departing_list: Array = by_from_node.get(node.id, [])
+		for d in departing_list:
+			var departing: Lane = d
+			if departing.segment == arriving.segment:
+				continue
 			var curve := _make_transition(arriving, departing)
 			if curve == null:
 				continue
 			var arc := LaneArc.make(arriving, departing, node, curve)
+			arc.enabled = not ArcOverrides.is_disabled(node, arriving, departing)
 			arriving.next_arcs[departing] = arc
 			departing.prev_arcs[arriving] = arc
 			arcs.append(arc)
@@ -196,6 +151,17 @@ func _build_arcs() -> void:
 				arcs_by_node[node.id] = []
 			arcs_by_node[node.id].append(arc)
 
+func _build_connections_from_arcs() -> void:
+	for lane in lanes:
+		lane.next_lanes.clear()
+		lane.prev_lanes.clear()
+	for lane in lanes:
+		for to_lane in lane.next_arcs:
+			var arc: LaneArc = lane.next_arcs[to_lane]
+			if arc.enabled:
+				lane.next_lanes.append(to_lane)
+				to_lane.prev_lanes.append(lane)
+
 func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
 	var start_p: Vector3 = from_lane.curve.sample_baked(from_lane.length)
 	var end_p: Vector3 = to_lane.curve.sample_baked(0.0)
@@ -205,7 +171,6 @@ func _make_transition(from_lane: Lane, to_lane: Lane) -> Curve3D:
 		straight.add_point(start_p)
 		straight.add_point(end_p)
 		return straight
-
 	var start_t: Vector3 = _end_tangent(from_lane.curve, from_lane.length)
 	var end_t: Vector3 = _start_tangent(to_lane.curve)
 	var handle_len: float = dist / 3.0
@@ -241,9 +206,31 @@ static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: floa
 	var u: float = 1.0 - t
 	return u*u*u*p0 + 3.0*u*u*t*p1 + 3.0*u*t*t*p2 + t*t*t*p3
 
-# ---------------------------------------------------------------- conflicts
+func _build_adjacency() -> void:
+	for lane in lanes:
+		lane.adjacent_lanes.clear()
+	var by_segment: Dictionary = {}
+	for lane in lanes:
+		var key: int = lane.segment.get_instance_id()
+		if not by_segment.has(key):
+			by_segment[key] = []
+		by_segment[key].append(lane)
+	for key in by_segment:
+		var group: Array = by_segment[key]
+		for i in group.size():
+			for j in range(i + 1, group.size()):
+				var a: Lane = group[i]
+				var b: Lane = group[j]
+				if a.direction != b.direction:
+					continue
+				if absi(a.lane_index - b.lane_index) != 1:
+					continue
+				a.adjacent_lanes.append(b)
+				b.adjacent_lanes.append(a)
 
-# Lane-level conflicts (used by the current yield system).
+const CONFLICT_DIST: float = 3.5
+const CONFLICT_SAMPLES: int = 30
+
 func _build_lane_conflicts() -> void:
 	var by_node: Dictionary = {}
 	for lane in lanes:
@@ -255,7 +242,6 @@ func _build_lane_conflicts() -> void:
 		if not by_node.has(key):
 			by_node[key] = []
 		by_node[key].append(lane)
-
 	for key in by_node:
 		var incoming: Array = by_node[key]
 		for i in incoming.size():
@@ -270,7 +256,19 @@ func _build_lane_conflicts() -> void:
 						conflicting_lanes[lb] = []
 					conflicting_lanes[lb].append(la)
 
-# Arc-level conflicts (used by Stage B's reservation model).
+func _lanes_conflict(a: Lane, b: Lane) -> bool:
+	for da in a.next_arcs:
+		var arc_a: LaneArc = a.next_arcs[da]
+		if not arc_a.enabled:
+			continue
+		for db in b.next_arcs:
+			var arc_b: LaneArc = b.next_arcs[db]
+			if not arc_b.enabled:
+				continue
+			if _arc_curves_conflict(arc_a.curve, arc_b.curve):
+				return true
+	return false
+
 func _build_arc_conflicts() -> void:
 	for arc in arcs:
 		arc.conflicting_arcs.clear()
@@ -280,29 +278,15 @@ func _build_arc_conflicts() -> void:
 			for j in range(i + 1, node_arcs.size()):
 				var a: LaneArc = node_arcs[i]
 				var b: LaneArc = node_arcs[j]
-				# Arcs sharing the same from-lane never conflict.
+				if not a.enabled or not b.enabled:
+					continue
 				if a.from_lane == b.from_lane:
 					continue
 				if _arc_curves_conflict(a.curve, b.curve):
 					a.conflicting_arcs.append(b)
 					b.conflicting_arcs.append(a)
 
-const CONFLICT_DIST: float = 3.5
-const CONFLICT_SAMPLES: int = 30
-
-func _lanes_conflict(a: Lane, b: Lane) -> bool:
-	for da in a.next_arcs:
-		for db in b.next_arcs:
-			var ca: Curve3D = a.next_arcs[da].curve
-			var cb: Curve3D = b.next_arcs[db].curve
-			if _arc_curves_conflict(ca, cb):
-				return true
-	return false
-
 func _arc_curves_conflict(ca: Curve3D, cb: Curve3D) -> bool:
-	return _curves_conflict(ca, cb)
-
-func _curves_conflict(ca: Curve3D, cb: Curve3D) -> bool:
 	var la: float = ca.get_baked_length()
 	var lb: float = cb.get_baked_length()
 	if la < 0.1 or lb < 0.1:
@@ -319,8 +303,6 @@ func _curves_conflict(ca: Curve3D, cb: Curve3D) -> bool:
 			if d < CONFLICT_DIST:
 				return true
 	return false
-
-# ---------------------------------------------------------------- queries
 
 func lanes_departing_from(node: RoadNode) -> Array[Lane]:
 	var result: Array[Lane] = []
