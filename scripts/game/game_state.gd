@@ -10,9 +10,9 @@ enum State { BUILD, PLAYING, PAUSED, FAILED_PLAYING, PASSED_PLAYING }
 
 var state: int = State.BUILD
 var speed_multiplier: float = 1.0
-var time_limit: float = 20.0
+var time_limit: float = 90.0
 var time_remaining: float = 90.0
-var target_count: int = 5
+var target_count: int = 40
 var spawned_count: int = 0
 var cleared_count: int = 0
 

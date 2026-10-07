@@ -11,6 +11,7 @@ var _mode: int = 1
 var _buttons: Array[Button] = []
 var _snapping_button: Button
 var _road_type_button: Button
+var _interactive: bool = true
 
 func _ready() -> void:
 	layer = 3
@@ -62,6 +63,13 @@ func _ready() -> void:
 func get_mode() -> int:
 	return _mode
 
+func set_interactive(on: bool) -> void:
+	_interactive = on
+	for b in _buttons:
+		b.disabled = not on
+	_road_type_button.disabled = not on
+	_snapping_button.disabled = not on
+
 func _add_mode_button(parent: Control, label_text: String, mode_id: int, tip: String) -> void:
 	var b := Button.new()
 	b.text = label_text
@@ -73,6 +81,9 @@ func _add_mode_button(parent: Control, label_text: String, mode_id: int, tip: St
 	_buttons.append(b)
 
 func _request(m: int) -> void:
+	if not _interactive:
+		_set_mode_visual(_mode)
+		return
 	if m == _mode:
 		_set_mode_visual(_mode)
 		return
