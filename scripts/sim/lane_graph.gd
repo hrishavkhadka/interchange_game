@@ -140,7 +140,10 @@ func _build_arcs() -> void:
 			if curve == null:
 				continue
 			var arc := LaneArc.make(arriving, departing, node, curve)
-			arc.enabled = not ArcOverrides.is_disabled(node, arriving, departing)
+			if node.is_pass_through():
+				arc.enabled = true
+			else:
+				arc.enabled = not ArcOverrides.is_disabled(node, arriving, departing)
 			arriving.next_arcs[departing] = arc
 			departing.prev_arcs[arriving] = arc
 			arcs.append(arc)
@@ -274,6 +277,11 @@ func _build_arc_conflicts() -> void:
 		arc.conflicting_arcs.clear()
 	for nid in arcs_by_node:
 		var node_arcs: Array = arcs_by_node[nid]
+		if node_arcs.is_empty():
+			continue
+		var first: LaneArc = node_arcs[0]
+		if first.node != null and first.node.is_pass_through():
+			continue
 		for i in node_arcs.size():
 			for j in range(i + 1, node_arcs.size()):
 				var a: LaneArc = node_arcs[i]

@@ -1,13 +1,12 @@
 class_name RoadNode
 extends RefCounted
 
-# Interior angle above which a 2-segment node is treated as a pass-through
-# (no trim, no patch, no arcs, no junction rules). 180° = perfectly straight.
 const PASS_THROUGH_ANGLE_DEG: float = 150.0
 
 var id: int
 var position: Vector3
 var is_waypoint: bool = false
+var forced_junction: bool = false
 var segment_ends: Array = []
 
 func _init(p_position: Vector3, p_id: int) -> void:
@@ -19,11 +18,12 @@ func degree() -> int:
 
 func add_segment_end(seg: RoadSegment, is_start: bool) -> void:
 	segment_ends.append({ "segment": seg, "is_start": is_start })
+	if segment_ends.size() >= 3:
+		forced_junction = true
 
-# A node is a pass-through when it has exactly two attached segments and
-# their outward directions are nearly collinear. Pass-through nodes behave
-# as if the two segments were a single continuous road.
 func is_pass_through() -> bool:
+	if forced_junction:
+		return false
 	if segment_ends.size() != 2:
 		return false
 	var dirs: Array[Vector3] = []
