@@ -17,7 +17,10 @@ var spawned_count: int = 0
 var cleared_count: int = 0
 
 func start_play() -> void:
-	if state == State.PLAYING or state == State.PAUSED:
+	if state == State.PAUSED:
+		_set_state(State.PLAYING)
+		return
+	if state != State.BUILD:
 		return
 	_reset_counters()
 	time_remaining = time_limit

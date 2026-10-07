@@ -90,7 +90,7 @@ func _build_top_right() -> void:
 	ctrl_row.add_theme_constant_override("separation", 4)
 	vbox.add_child(ctrl_row)
 
-	_play_button = _mk_ctrl("▶", "Play")
+	_play_button = _mk_ctrl("▶", "Play / Resume")
 	_play_button.pressed.connect(func() -> void: GameState.start_play())
 	ctrl_row.add_child(_play_button)
 
@@ -204,17 +204,14 @@ func _on_counters(spawned: int, cleared: int, target: int) -> void:
 	_counters_label.text = "Spawned %d / Cleared %d / Target %d" % [spawned, cleared, target]
 
 func _on_state(s: int) -> void:
-	var playing: bool = s == GameState.State.PLAYING or s == GameState.State.FAILED_PLAYING or s == GameState.State.PASSED_PLAYING
-	_play_button.disabled = playing
-	_pause_button.disabled = not playing
-	_stop_button.disabled = not playing
-	_restart_button.disabled = not playing
+	var in_build: bool = s == GameState.State.BUILD
+	var in_pause: bool = s == GameState.State.PAUSED
+	_play_button.disabled = not (in_build or in_pause)
+	_pause_button.disabled = in_build
+	_stop_button.disabled = in_build
+	_restart_button.disabled = in_build
 	for b in _speed_buttons:
-		b.disabled = not playing
-	if s == GameState.State.PAUSED:
-		_pause_button.text = "▶"
-	else:
-		_pause_button.text = "⏸"
+		b.disabled = in_build
 
 func _show_fail() -> void:
 	_fail_popup.visible = true
