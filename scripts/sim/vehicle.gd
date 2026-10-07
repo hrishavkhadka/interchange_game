@@ -1,6 +1,8 @@
 class_name Vehicle
 extends Node3D
 
+signal despawned
+
 const LATERAL_SAMPLES: int = 16
 const AVOID_SECONDS: float = 8.0
 const STUCK_SPEED: float = 0.2
@@ -203,6 +205,10 @@ func abort_lane_change() -> void:
 func complete_lane_change() -> void:
 	_saved_path = []
 	lateral_target_lane = null
+
+func _despawn() -> void:
+	despawned.emit()
+	queue_free()
 
 static func _bezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float) -> Vector3:
 	var u: float = 1.0 - t

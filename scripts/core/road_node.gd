@@ -6,6 +6,8 @@ const PASS_THROUGH_ANGLE_DEG: float = 150.0
 var id: int
 var position: Vector3
 var is_waypoint: bool = false
+var is_entry: bool = false
+var is_exit: bool = false
 var segment_ends: Array = []
 
 func _init(p_position: Vector3, p_id: int) -> void:
@@ -18,9 +20,6 @@ func degree() -> int:
 func add_segment_end(seg: RoadSegment, is_start: bool) -> void:
 	segment_ends.append({ "segment": seg, "is_start": is_start })
 
-# Purely geometric. Recomputed from current topology every time it is asked.
-# A node with 2 collinear segments is a pass-through; anything else is a
-# junction (3+ segments) or a dead end (1 segment).
 func is_pass_through() -> bool:
 	if segment_ends.size() != 2:
 		return false

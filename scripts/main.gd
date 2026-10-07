@@ -3,6 +3,9 @@ extends Node3D
 var _builder: RoadBuilder
 var _vehicles: VehicleManager
 var _junction_editor: JunctionEditor
+var _snap_toolbar: SnapToolbar
+var _road_type_menu: RoadTypeMenu
+var _main_toolbar: MainToolbar
 
 func _ready() -> void:
 	_setup_environment()
@@ -14,10 +17,21 @@ func _ready() -> void:
 
 	var hud := _setup_hud()
 	_builder.cost_changed.connect(hud.set_cost)
-	_builder.road_type_changed.connect(func(_idx: int, name: String) -> void:
+
+	_road_type_menu = RoadTypeMenu.new()
+	_road_type_menu.name = "RoadTypeMenu"
+	add_child(_road_type_menu)
+	_road_type_menu.type_selected.connect(func(idx: int, name: String) -> void:
+		_builder.set_road_type_index(idx)
 		hud.set_road_type(name))
+
+	_builder.road_type_changed.connect(func(idx: int, name: String) -> void:
+		hud.set_road_type(name)
+		_road_type_menu.set_selected(idx))
+
 	_builder.set_road_type_index(0)
 	hud.set_road_type("2-lane two-way")
+	_road_type_menu.set_selected(0)
 
 	var visualizer := RoadGraphVisualizer.new()
 	visualizer.name = "RoadGraphVisualizer"
@@ -43,32 +57,47 @@ func _ready() -> void:
 	_junction_editor.name = "JunctionEditor"
 	add_child(_junction_editor)
 
-	var snap_toolbar := SnapToolbar.new()
-	snap_toolbar.name = "SnapToolbar"
-	snap_toolbar.setup(_builder.settings)
-	add_child(snap_toolbar)
+	_snap_toolbar = SnapToolbar.new()
+	_snap_toolbar.name = "SnapToolbar"
+	_snap_toolbar.setup(_builder.settings)
+	add_child(_snap_toolbar)
 
-	var main_toolbar := MainToolbar.new()
-	main_toolbar.name = "MainToolbar"
-	add_child(main_toolbar)
+	_main_toolbar = MainToolbar.new()
+	_main_toolbar.name = "MainToolbar"
+	add_child(_main_toolbar)
 
 	var snap_expanded: bool = false
+	var road_menu_expanded: bool = false
 
-	main_toolbar.mode_requested.connect(func(m: int) -> void:
-		print("[main] mode_requested ", m)
-		if m == 3:
+	_main_toolbar.mode_requested.connect(func(m: int) -> void:
+		_junction_editor.set_active(false)
+		if m == 4:
 			_builder.set_mode(0)
 			_junction_editor.set_active(true)
 		else:
-			_junction_editor.set_active(false)
 			_builder.set_mode(m)
-		snap_toolbar.set_expanded(snap_expanded and m == 1))
+		_snap_toolbar.set_expanded(snap_expanded and (m == 1))
+		_road_type_menu.set_expanded(road_menu_expanded and (m == 1)))
 
-	main_toolbar.snapping_toggled.connect(func(on: bool) -> void:
+	_main_toolbar.snapping_toggled.connect(func(on: bool) -> void:
 		snap_expanded = on
-		snap_toolbar.set_expanded(on and main_toolbar.get_mode() == 1))
+		_snap_toolbar.set_expanded(on and (_main_toolbar.get_mode() == 1)))
 
-	_builder.set_mode(main_toolbar.get_mode())
+	_main_toolbar.road_type_menu_toggled.connect(func(on: bool) -> void:
+		road_menu_expanded = on
+		_road_type_menu.set_expanded(on and (_main_toolbar.get_mode() == 1)))
+
+	_builder.set_mode(_main_toolbar.get_mode())
+
+	GameState.state_changed.connect(func(s: int) -> void:
+		var build: bool = s == GameState.State.BUILD
+		if build:
+			_builder.set_mode(_main_toolbar.get_mode())
+		else:
+			_builder.set_mode(0)
+			_junction_editor.set_active(false)
+		_snap_toolbar.visible = build and snap_expanded
+		_road_type_menu.visible = build and road_menu_expanded)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:
@@ -89,6 +118,11 @@ func _input(event: InputEvent) -> void:
 			KEY_K:
 				_vehicles.debug_lane_changes = not _vehicles.debug_lane_changes
 				print("[debug] lane-change logging = ", _vehicles.debug_lane_changes)
+			KEY_SPACE:
+				if GameState.is_build():
+					GameState.start_play()
+				else:
+					GameState.toggle_pause()
 
 func _setup_environment() -> void:
 	var env := Environment.new()

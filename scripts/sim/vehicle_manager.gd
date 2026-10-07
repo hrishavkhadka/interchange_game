@@ -1,7 +1,7 @@
 class_name VehicleManager
 extends Node3D
 
-@export var spawn_interval: float = 0.4
+@export var spawn_interval: float = 0.5
 @export var spawn_clear_distance: float = 10.0
 @export var max_vehicles: int = 200
 @export var enable_lane_changes: bool = true
@@ -13,40 +13,33 @@ var _debug_tick: int = 0
 const RNG_SEED: int = 987654321
 const MAX_LEADER_LOOKAHEAD_STEPS: int = 4
 
-# Motion
 const MAX_SPEED: float = 14.0
 const ACCEL: float = 7.0
 const DECEL: float = 7.0
 
-# Car following
 const DF_C1: float = 0.5
 const DF_C2: float = 0.5
 const DF_C3: float = 1.0
 const DF_BAND: float = 1.0
 const TARGET_MARGIN: float = 2.0
 
-# Lane change
-const LC_BACK_C1: float = 1.0
+const LC_BACK_C1: float = 0.7
 const LC_BACK_C2: float = 5.0
 const LC_FWD_C1: float = 0.7
 const LC_FWD_C2: float = 6.0
 const LC_COOLDOWN_RETURN: float = 3.0
-const LC_COOLDOWN_ONWARD: float = 0.0
-const LC_FORWARD_MIN: float = 10.0
-const LC_FORWARD_TIME: float = 0.8
+const LC_COOLDOWN_ONWARD: float = 0.2
+const LC_FORWARD_MIN: float = 9.0
+const LC_FORWARD_TIME: float = 0.7
 
-# Junction
 const APPROACH_DIST: float = 15.0
 const COMMIT_DIST: float = 3.0
 const CLEARANCE: float = 8.0
-const JUNC_APPROACH_SPEED: float = 7.0
-const JUNC_COMMIT_SPEED: float = 5.5
-
-# Safety
-const STUCK_TIME: float = 5.0
+const JUNC_APPROACH_SPEED: float = 14.0
+const STUCK_TIME: float = 8.0
 const STUCK_NUDGE_SPEED: float = 2.0
-const NUDGE_CLEAR_GAP: float = 4.0
-const JUNCTION_ARRIVAL_COOLDOWN: float = 0.0
+const NUDGE_CLEAR_GAP: float = 5.0
+const JUNCTION_ARRIVAL_COOLDOWN: float = 0.1
 
 var _timer: float = 0.0
 var _color_seed: int = 0
@@ -57,27 +50,48 @@ var _arc_claims: Dictionary = {}
 func _ready() -> void:
 	_rng.seed = RNG_SEED
 	LaneGraph.lanes_changed.connect(_on_lanes_changed)
+	GameState.state_changed.connect(_on_state_changed)
 
 func _on_lanes_changed() -> void:
-	for c in get_children():
-		c.queue_free()
+	_clear_all_vehicles()
+
+func _on_state_changed(_s: int) -> void:
+	if GameState.is_build():
+		_clear_all_vehicles()
+		_timer = 0.0
+		_rng.seed = RNG_SEED
+		_color_seed = 0
+
+func _clear_all_vehicles() -> void:
+	for v in _vehicles:
+		if is_instance_valid(v):
+			v.queue_free()
 	_vehicles.clear()
 	_arc_claims.clear()
 
 func _process(delta: float) -> void:
+	if not GameState.is_playing():
+		return
 	_prune_dead()
-	_timer += delta
+	if GameState.spawned_count >= GameState.target_count:
+		return
+	if _vehicles.size() >= max_vehicles:
+		return
+	_timer += delta * GameState.speed_multiplier
 	if _timer >= spawn_interval:
 		_timer = 0.0
 		_try_spawn()
 
 func _physics_process(delta: float) -> void:
+	if not GameState.is_playing():
+		return
+	var scaled: float = delta * GameState.speed_multiplier
 	_prune_dead()
 	var occ := _build_occupancy()
 	_compute_arc_claims(occ)
 	_debug_tick += 1
 	for v in _vehicles:
-		_step_vehicle(v, occ, delta)
+		_step_vehicle(v, occ, scaled)
 	for v in _vehicles:
 		if is_instance_valid(v):
 			v._update_transform()
@@ -186,6 +200,50 @@ func _lane_l_clear(lane: Lane, occ: Dictionary) -> bool:
 			return false
 	return true
 
+func _find_alternate_arc(v: Vehicle, blocked_arc: LaneArc, occ: Dictionary) -> LaneArc:
+	var from_lane: Lane = blocked_arc.from_lane
+	var dest_segment = blocked_arc.to_lane.segment
+	var dest_dir: String = blocked_arc.to_lane.direction
+	for next_lane_v in from_lane.next_arcs:
+		var next_lane: Lane = next_lane_v
+		if next_lane == blocked_arc.to_lane:
+			continue
+		if next_lane.segment != dest_segment:
+			continue
+		if next_lane.direction != dest_dir:
+			continue
+		var alt: LaneArc = from_lane.next_arcs[next_lane]
+		if alt == null or alt.length < 0.05 or not alt.enabled:
+			continue
+		if not _lane_l_clear(next_lane, occ):
+			continue
+		var alt_blocked: bool = false
+		for other in alt.conflicting_arcs:
+			if _arc_claims.has(other):
+				alt_blocked = true
+				break
+		if alt_blocked:
+			continue
+		return alt
+	return null
+
+func _splice_alternate_arc(v: Vehicle, new_arc: LaneArc) -> void:
+	var new_route: Array = LanePathfinder.find_path(new_arc.to_lane, v.target_node)
+	if new_route.is_empty():
+		return
+	var kept: Array[PathStep] = []
+	for i in range(v.step_index + 1):
+		kept.append(v.path[i])
+	var arc_speed: float = minf(new_arc.from_lane.speed_limit, new_arc.to_lane.speed_limit)
+	var route_steps := _build_steps(new_route)
+	var result: Array[PathStep] = []
+	for s in kept:
+		result.append(s)
+	result.append(PathStep.make(new_arc.curve, arc_speed, false, null, 0.0, new_arc))
+	for s in route_steps:
+		result.append(s)
+	v.path = result
+
 func _step_vehicle(v: Vehicle, occ: Dictionary, delta: float) -> void:
 	if not is_instance_valid(v):
 		return
@@ -270,7 +328,7 @@ func _advance(v: Vehicle, move: float) -> void:
 	while move > 0.0 and safety < 8:
 		safety += 1
 		if v.step_index >= v.path.size():
-			v.queue_free()
+			_despawn(v)
 			return
 		var step: PathStep = v.path[v.step_index]
 		var remaining: float = step.length - v.distance_on_step
@@ -281,7 +339,7 @@ func _advance(v: Vehicle, move: float) -> void:
 			move -= remaining
 			v.step_index += 1
 			if v.step_index >= v.path.size():
-				v.queue_free()
+				_despawn(v)
 				return
 			var new_step: PathStep = v.path[v.step_index]
 			v.distance_on_step = new_step.start_dist
@@ -289,13 +347,19 @@ func _advance(v: Vehicle, move: float) -> void:
 				v.complete_lane_change()
 				v.cooldown = maxf(v.cooldown, JUNCTION_ARRIVAL_COOLDOWN)
 
-# ---------------------------------------------------------------- lane change
+func _despawn(v: Vehicle) -> void:
+	if not is_instance_valid(v):
+		return
+	GameState.register_cleared()
+	v._despawn()
 
 func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 	var current: Lane = v.current_lane()
 	if current == null:
 		return
-	# Only change when the current lane is actually holding us back.
+	var room: float = v.current_step_length() - v.distance_on_step
+	if room < APPROACH_DIST:
+		return
 	if not _is_constrained(v, occ):
 		return
 	var next_lane: Variant = _next_route_lane(v)
@@ -312,7 +376,6 @@ func _maybe_lane_change(v: Vehicle, occ: Dictionary) -> void:
 			_execute_lane_change(v, target)
 			return
 
-# Is the vehicle currently being constrained by a leader in its own lane?
 func _is_constrained(v: Vehicle, occ: Dictionary) -> bool:
 	var leader: Variant = _find_leader(v, occ)
 	if leader == null:
@@ -335,6 +398,9 @@ func _eligible_lanes(current: Lane, next_lane: Variant) -> Array:
 		if next_lane != null:
 			var nl: Lane = next_lane
 			if not lane.next_arcs.has(nl):
+				continue
+			var arc: LaneArc = lane.next_arcs[nl]
+			if not arc.enabled:
 				continue
 		result.append(lane)
 	return result
@@ -412,12 +478,10 @@ func _build_steps_from_offset(lanes: Array, offset: float) -> Array[PathStep]:
 			var nxt: Lane = lanes[i + 1]
 			if lane.next_arcs.has(nxt):
 				var arc: LaneArc = lane.next_arcs[nxt]
-				if arc != null and arc.length > 0.05:
+				if arc != null and arc.enabled and arc.length > 0.05:
 					var sp: float = minf(lane.speed_limit, nxt.speed_limit)
 					steps.append(PathStep.make(arc.curve, sp, false, null, 0.0, arc))
 	return steps
-
-# ---------------------------------------------------------------- leader / helpers
 
 func _find_leader(v: Vehicle, occ: Dictionary) -> Variant:
 	var c := v.current_curve()
@@ -532,8 +596,6 @@ static func _project_onto_lane(pos: Vector3, lane: Lane) -> float:
 			lo = m1
 	return clampf(((lo + hi) * 0.5) * L, 0.0, L)
 
-# ---------------------------------------------------------------- spawn
-
 func _align_exit_lane(route: Array, target: RoadNode, pref_idx: int) -> Array:
 	if route.size() < 2:
 		return route
@@ -605,6 +667,7 @@ func _try_spawn() -> void:
 	v.setup(steps, target, _color_seed, 0.0)
 	_vehicles.append(v)
 	_color_seed += 1
+	GameState.register_spawn()
 
 func _count_at_lane_start(lane: Lane) -> int:
 	var count: int = 0
@@ -636,7 +699,7 @@ func _build_steps(lanes: Array) -> Array[PathStep]:
 			var nxt: Lane = lanes[i + 1]
 			if lane.next_arcs.has(nxt):
 				var arc: LaneArc = lane.next_arcs[nxt]
-				if arc != null and arc.length > 0.05:
+				if arc != null and arc.enabled and arc.length > 0.05:
 					var sp: float = minf(lane.speed_limit, nxt.speed_limit)
 					steps.append(PathStep.make(arc.curve, sp, false, null, 0.0, arc))
 	return steps
@@ -647,57 +710,3 @@ func _dead_end_nodes() -> Array:
 		if node.segment_ends.size() == 1:
 			result.append(node)
 	return result
-
-# Look for another arc from the same source lane to a different lane on the
-# same destination segment, whose conflicts are all unclaimed. Returns the
-# arc, or null if none is available.
-func _find_alternate_arc(v: Vehicle, blocked_arc: LaneArc, occ: Dictionary) -> LaneArc:
-	var from_lane: Lane = blocked_arc.from_lane
-	var dest_segment = blocked_arc.to_lane.segment
-	var dest_dir: String = blocked_arc.to_lane.direction
-	for next_lane_v in from_lane.next_arcs:
-		var next_lane: Lane = next_lane_v
-		if next_lane == blocked_arc.to_lane:
-			continue
-		if next_lane.segment != dest_segment:
-			continue
-		if next_lane.direction != dest_dir:
-			continue
-		var alt: LaneArc = from_lane.next_arcs[next_lane]
-		if alt == null or alt.length < 0.05:
-			continue
-		if not _lane_l_clear(next_lane, occ):
-			continue
-		var alt_blocked: bool = false
-		for other in alt.conflicting_arcs:
-			if _arc_claims.has(other):
-				alt_blocked = true
-				break
-		if alt_blocked:
-			continue
-		return alt
-	return null
-
-# Swap the vehicle's path so that it now enters `new_arc` instead of its
-# previously planned arc, and re-routes from the new destination lane
-# onward. Silently does nothing if a route from the new lane cannot be
-# found.
-func _splice_alternate_arc(v: Vehicle, new_arc: LaneArc) -> void:
-	var new_route: Array = LanePathfinder.find_path(new_arc.to_lane, v.target_node)
-	if new_route.is_empty():
-		return
-	var kept: Array[PathStep] = []
-	for i in range(v.step_index + 1):
-		kept.append(v.path[i])
-	var new_steps: Array[PathStep] = []
-	var arc_speed: float = minf(new_arc.from_lane.speed_limit, new_arc.to_lane.speed_limit)
-	new_steps.append(PathStep.make(new_arc.curve, arc_speed, false, null, 0.0, new_arc))
-	var route_steps := _build_steps(new_route)
-	for s in route_steps:
-		new_steps.append(s)
-	var result: Array[PathStep] = []
-	for s in kept:
-		result.append(s)
-	for s in new_steps:
-		result.append(s)
-	v.path = result

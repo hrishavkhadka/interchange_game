@@ -8,7 +8,6 @@ var end_node: RoadNode
 
 var _mesh_instance: MeshInstance3D
 var _material: StandardMaterial3D
-
 var _base_color: Color = Color(0.22, 0.22, 0.25)
 var _hovered: bool = false
 
@@ -17,12 +16,6 @@ func setup(rt: RoadType, c: Curve3D) -> void:
 	curve = c
 	_do_rebuild()
 
-# Called by the builder after adding or removing an endpoint at either end.
-# The mesh's insets depend on the current segment_ends size at each node,
-# so this must be re-run when the graph topology changes at a node.
-func rebuild_now() -> void:
-	_do_rebuild()
-	
 func rebuild_mesh() -> void:
 	_do_rebuild()
 
@@ -60,7 +53,7 @@ func set_preview_validity(valid: bool) -> void:
 		_material.albedo_color = _base_color
 	else:
 		_material.albedo_color = Color(0.68, 0.15, 0.15)
-		
+
 func set_hovered(on: bool) -> void:
 	_hovered = on
 	if _material == null:
@@ -69,9 +62,37 @@ func set_hovered(on: bool) -> void:
 		_material.albedo_color = Color(0.85, 0.35, 0.15)
 	else:
 		_material.albedo_color = _base_color
-		
+
 func is_hovered() -> bool:
 	return _hovered
+
+func reverse() -> void:
+	if curve == null:
+		return
+	var old_start := start_node
+	var old_end := end_node
+	var L: float = curve.get_baked_length()
+	var samples: int = maxi(8, int(L * 0.5))
+	var new_curve := Curve3D.new()
+	for i in range(samples + 1):
+		var t: float = 1.0 - float(i) / float(samples)
+		new_curve.add_point(curve.sample_baked(t * L))
+	curve = new_curve
+	start_node = old_end
+	end_node = old_start
+	if old_start != null:
+		for e in old_start.segment_ends:
+			var ed: Dictionary = e
+			if ed["segment"] == self:
+				ed["is_start"] = false
+				break
+	if old_end != null:
+		for e in old_end.segment_ends:
+			var ed: Dictionary = e
+			if ed["segment"] == self:
+				ed["is_start"] = true
+				break
+	_do_rebuild()
 
 func _do_rebuild() -> void:
 	_ensure_mesh_instance()

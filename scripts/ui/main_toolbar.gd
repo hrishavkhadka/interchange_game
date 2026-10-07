@@ -3,10 +3,14 @@ extends CanvasLayer
 
 signal mode_requested(mode: int)
 signal snapping_toggled(on: bool)
+signal road_type_menu_toggled(on: bool)
+
+const BTN_SIZE: Vector2 = Vector2(36, 36)
 
 var _mode: int = 1
 var _buttons: Array[Button] = []
 var _snapping_button: Button
+var _road_type_button: Button
 
 func _ready() -> void:
 	layer = 3
@@ -17,8 +21,8 @@ func _ready() -> void:
 	panel.anchor_top = 1.0
 	panel.anchor_bottom = 1.0
 	panel.offset_left = 16
-	panel.offset_right = 526
-	panel.offset_top = -64
+	panel.offset_right = 396
+	panel.offset_top = -56
 	panel.offset_bottom = -16
 	add_child(panel)
 
@@ -26,19 +30,29 @@ func _ready() -> void:
 	row.add_theme_constant_override("separation", 4)
 	panel.add_child(row)
 
-	_add_mode_button(row, "Cursor", 0, "Pointer mode")
-	_add_mode_button(row, "Roads", 1, "Road building mode")
-	_add_mode_button(row, "Demolish", 2, "Demolish mode")
-	_add_mode_button(row, "Junction", 3, "Edit lane connections at a junction")
+	_add_mode_button(row, "▶", 0, "Pointer mode")
+	_add_mode_button(row, "≡", 1, "Road building")
+	_add_mode_button(row, "✖", 2, "Demolish")
+	_add_mode_button(row, "⇄", 3, "Reverse direction")
+	_add_mode_button(row, "◇", 4, "Edit lane connections")
 
 	var sep := VSeparator.new()
 	row.add_child(sep)
 
+	_road_type_button = Button.new()
+	_road_type_button.text = "▦"
+	_road_type_button.toggle_mode = true
+	_road_type_button.tooltip_text = "Road types"
+	_road_type_button.custom_minimum_size = BTN_SIZE
+	_road_type_button.toggled.connect(func(on: bool) -> void:
+		road_type_menu_toggled.emit(on))
+	row.add_child(_road_type_button)
+
 	_snapping_button = Button.new()
-	_snapping_button.text = "Snapping"
+	_snapping_button.text = "▤"
 	_snapping_button.toggle_mode = true
-	_snapping_button.tooltip_text = "Toggle the snapping options panel"
-	_snapping_button.custom_minimum_size = Vector2(90, 36)
+	_snapping_button.tooltip_text = "Snapping options"
+	_snapping_button.custom_minimum_size = BTN_SIZE
 	_snapping_button.toggled.connect(func(on: bool) -> void:
 		snapping_toggled.emit(on))
 	row.add_child(_snapping_button)
@@ -53,7 +67,7 @@ func _add_mode_button(parent: Control, label_text: String, mode_id: int, tip: St
 	b.text = label_text
 	b.toggle_mode = true
 	b.tooltip_text = tip
-	b.custom_minimum_size = Vector2(90, 36)
+	b.custom_minimum_size = BTN_SIZE
 	b.pressed.connect(func() -> void: _request(mode_id))
 	parent.add_child(b)
 	_buttons.append(b)
