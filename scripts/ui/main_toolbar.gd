@@ -4,6 +4,7 @@ extends CanvasLayer
 signal mode_requested(mode: int)
 signal snapping_toggled(on: bool)
 signal road_type_menu_toggled(on: bool)
+signal level_data_toggled(on: bool)
 
 const BTN_SIZE: Vector2 = Vector2(36, 36)
 
@@ -11,6 +12,7 @@ var _mode: int = 1
 var _buttons: Array[Button] = []
 var _snapping_button: Button
 var _road_type_button: Button
+var _level_data_button: Button
 var _interactive: bool = true
 
 func _ready() -> void:
@@ -22,7 +24,7 @@ func _ready() -> void:
 	panel.anchor_top = 1.0
 	panel.anchor_bottom = 1.0
 	panel.offset_left = 16
-	panel.offset_right = 436
+	panel.offset_right = 476
 	panel.offset_top = -56
 	panel.offset_bottom = -16
 	add_child(panel)
@@ -59,6 +61,15 @@ func _ready() -> void:
 		snapping_toggled.emit(on))
 	row.add_child(_snapping_button)
 
+	_level_data_button = Button.new()
+	_level_data_button.text = "⚙"
+	_level_data_button.toggle_mode = true
+	_level_data_button.tooltip_text = "Level data (entries, demand)"
+	_level_data_button.custom_minimum_size = BTN_SIZE
+	_level_data_button.toggled.connect(func(on: bool) -> void:
+		level_data_toggled.emit(on))
+	row.add_child(_level_data_button)
+
 	_set_mode_visual(_mode)
 
 func get_mode() -> int:
@@ -70,6 +81,7 @@ func set_interactive(on: bool) -> void:
 		b.disabled = not on
 	_road_type_button.disabled = not on
 	_snapping_button.disabled = not on
+	_level_data_button.disabled = not on
 
 func _add_mode_button(parent: Control, label_text: String, mode_id: int, tip: String) -> void:
 	var b := Button.new()

@@ -47,6 +47,11 @@ var _rng := RandomNumberGenerator.new()
 var _vehicles: Array[Vehicle] = []
 var _arc_claims: Dictionary = {}
 
+# Spawn plan built at play start.
+# entries: Array of { entry: RoadNode, exit: RoadNode, remaining: int }
+var _spawn_plan: Array = []
+var _used_marked_plan: bool = false
+
 func _ready() -> void:
 	_rng.seed = RNG_SEED
 	LaneGraph.lanes_changed.connect(_on_lanes_changed)
@@ -55,12 +60,60 @@ func _ready() -> void:
 func _on_lanes_changed() -> void:
 	_clear_all_vehicles()
 
-func _on_state_changed(_s: int) -> void:
+func _on_state_changed(s: int) -> void:
 	if GameState.is_build():
 		_clear_all_vehicles()
 		_timer = 0.0
 		_rng.seed = RNG_SEED
 		_color_seed = 0
+		_spawn_plan.clear()
+		_used_marked_plan = false
+	elif s == GameState.State.PLAYING and _spawn_plan.is_empty():
+		# Fresh play start.
+		_build_spawn_plan()
+
+func _build_spawn_plan() -> void:
+	_spawn_plan.clear()
+	_used_marked_plan = false
+	var entries: Array = []
+	var exits: Array = []
+	for n in RoadGraph.nodes:
+		if n.segment_ends.size() != 1:
+			continue
+		if n.is_entry:
+			entries.append(n)
+		if n.is_exit:
+			exits.append(n)
+	if entries.is_empty():
+		# Fallback: no explicit entries, spawn randomly until GameState.target_count.
+		return
+	_used_marked_plan = true
+	var total: int = 0
+	for e in entries:
+		var entry: RoadNode = e
+		for exit_id in entry.demand:
+			var exit_node := _find_node_by_id(int(exit_id))
+			if exit_node == null:
+				continue
+			if not exit_node.is_exit:
+				continue
+			var count: int = int(entry.demand[exit_id])
+			if count <= 0:
+				continue
+			_spawn_plan.append({ "entry": entry, "exit": exit_node, "remaining": count })
+			total += count
+	if total <= 0:
+		# Entries marked but no demand. Fall back to random exits.
+		_used_marked_plan = false
+		_spawn_plan.clear()
+		return
+	GameState.set_target(total)
+
+func _find_node_by_id(nid: int) -> RoadNode:
+	for n in RoadGraph.nodes:
+		if n.id == nid:
+			return n
+	return null
 
 func _clear_all_vehicles() -> void:
 	for v in _vehicles:
@@ -638,6 +691,72 @@ func _try_spawn() -> void:
 		return
 	if _vehicles.size() >= max_vehicles:
 		return
+	if _used_marked_plan:
+		_try_spawn_from_plan()
+	else:
+		_try_spawn_fallback()
+
+func _try_spawn_from_plan() -> void:
+	# Pick a random pair with remaining > 0 and try to spawn.
+	if _spawn_plan.is_empty():
+		return
+	# Build list of indices with remaining > 0.
+	var valid: Array = []
+	for i in _spawn_plan.size():
+		var p: Dictionary = _spawn_plan[i]
+		if p["remaining"] > 0:
+			valid.append(i)
+	if valid.is_empty():
+		return
+	# Shuffle so blocked pairs don't starve spawn.
+	for i in range(valid.size() - 1, 0, -1):
+		var j: int = _rng.randi_range(0, i)
+		var tmp = valid[i]
+		valid[i] = valid[j]
+		valid[j] = tmp
+	for idx_v in valid:
+		var idx: int = idx_v
+		var pair: Dictionary = _spawn_plan[idx]
+		var entry: RoadNode = pair["entry"]
+		var exit_node: RoadNode = pair["exit"]
+		if _try_spawn_pair(entry, exit_node):
+			pair["remaining"] = int(pair["remaining"]) - 1
+			return
+
+func _try_spawn_pair(entry: RoadNode, exit_node: RoadNode) -> bool:
+	var source_lanes: Array = LaneGraph.lanes_departing_from(entry)
+	if source_lanes.is_empty():
+		return false
+	var best_lane: Lane = null
+	var best_route: Array = []
+	var best_count: int = 999999
+	for lane_v in source_lanes:
+		var lane: Lane = lane_v
+		var r: Array = LanePathfinder.find_path(lane, exit_node)
+		if r.is_empty():
+			continue
+		var c: int = _count_at_lane_start(lane)
+		if c < best_count:
+			best_count = c
+			best_lane = lane
+			best_route = r
+	if best_lane == null:
+		return false
+	if not _start_lane_is_clear(best_lane):
+		return false
+	best_route = _align_exit_lane(best_route, exit_node, best_lane.lane_index)
+	var steps: Array[PathStep] = _build_steps(best_route)
+	if steps.is_empty():
+		return false
+	var v := Vehicle.new()
+	add_child(v)
+	v.setup(steps, exit_node, _color_seed, 0.0)
+	_vehicles.append(v)
+	_color_seed += 1
+	GameState.register_spawn()
+	return true
+
+func _try_spawn_fallback() -> void:
 	var de := _dead_end_nodes()
 	var all_dead: Array = de["all"]
 	var entries: Array = de["entries"]

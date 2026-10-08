@@ -13,6 +13,7 @@ var speed_multiplier: float = 1.0
 var time_limit: float = 90.0
 var time_remaining: float = 90.0
 var target_count: int = 40
+var default_target_count: int = 40
 var spawned_count: int = 0
 var cleared_count: int = 0
 
@@ -24,6 +25,7 @@ func start_play() -> void:
 		return
 	_reset_counters()
 	time_remaining = time_limit
+	target_count = default_target_count
 	_set_state(State.PLAYING)
 
 func toggle_pause() -> void:
@@ -42,6 +44,10 @@ func restart() -> void:
 
 func set_speed(m: float) -> void:
 	speed_multiplier = m
+
+func set_target(n: int) -> void:
+	target_count = maxi(1, n)
+	counters_changed.emit(spawned_count, cleared_count, target_count)
 
 func is_playing() -> bool:
 	return state == State.PLAYING or state == State.FAILED_PLAYING or state == State.PASSED_PLAYING

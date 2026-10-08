@@ -6,6 +6,7 @@ var _junction_editor: JunctionEditor
 var _marker_editor: MarkerEditor
 var _snap_toolbar: SnapToolbar
 var _road_type_menu: RoadTypeMenu
+var _level_data_panel: LevelDataPanel
 var _main_toolbar: MainToolbar
 
 func _ready() -> void:
@@ -67,12 +68,17 @@ func _ready() -> void:
 	_snap_toolbar.setup(_builder.settings)
 	add_child(_snap_toolbar)
 
+	_level_data_panel = LevelDataPanel.new()
+	_level_data_panel.name = "LevelDataPanel"
+	add_child(_level_data_panel)
+
 	_main_toolbar = MainToolbar.new()
 	_main_toolbar.name = "MainToolbar"
 	add_child(_main_toolbar)
 
 	var snap_expanded: bool = false
 	var road_menu_expanded: bool = false
+	var level_data_expanded: bool = false
 
 	_main_toolbar.mode_requested.connect(func(m: int) -> void:
 		_junction_editor.set_active(false)
@@ -96,6 +102,10 @@ func _ready() -> void:
 		road_menu_expanded = on
 		_road_type_menu.set_expanded(on and (_main_toolbar.get_mode() == 1)))
 
+	_main_toolbar.level_data_toggled.connect(func(on: bool) -> void:
+		level_data_expanded = on
+		_level_data_panel.set_expanded(on and GameState.is_build()))
+
 	_builder.set_mode(_main_toolbar.get_mode())
 
 	GameState.state_changed.connect(func(s: int) -> void:
@@ -108,7 +118,8 @@ func _ready() -> void:
 			_junction_editor.set_active(false)
 			_marker_editor.set_active(false)
 		_snap_toolbar.visible = build and snap_expanded
-		_road_type_menu.visible = build and road_menu_expanded)
+		_road_type_menu.visible = build and road_menu_expanded
+		_level_data_panel.visible = build and level_data_expanded)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:

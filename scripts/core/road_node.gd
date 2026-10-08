@@ -8,6 +8,8 @@ var position: Vector3
 var is_waypoint: bool = false
 var is_entry: bool = false
 var is_exit: bool = false
+# Only meaningful for entry nodes. Maps exit_node_id -> vehicle count.
+var demand: Dictionary = {}
 var segment_ends: Array = []
 
 func _init(p_position: Vector3, p_id: int) -> void:
@@ -43,3 +45,9 @@ func is_pass_through() -> bool:
 		dirs.append(d.normalized())
 	var ang: float = dirs[0].angle_to(dirs[1])
 	return ang > deg_to_rad(PASS_THROUGH_ANGLE_DEG)
+
+func total_demand() -> int:
+	var s := 0
+	for v in demand.values():
+		s += int(v)
+	return s
