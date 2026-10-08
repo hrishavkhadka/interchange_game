@@ -619,20 +619,43 @@ func _align_exit_lane(route: Array, target: RoadNode, pref_idx: int) -> Array:
 		return new_route
 	return route
 
+func _dead_end_nodes() -> Dictionary:
+	var all_dead: Array = []
+	var entries: Array = []
+	var exits: Array = []
+	for node in RoadGraph.nodes:
+		if node.segment_ends.size() != 1:
+			continue
+		all_dead.append(node)
+		if node.is_entry:
+			entries.append(node)
+		if node.is_exit:
+			exits.append(node)
+	return { "all": all_dead, "entries": entries, "exits": exits }
+
 func _try_spawn() -> void:
 	if LaneGraph.lanes.is_empty():
 		return
 	if _vehicles.size() >= max_vehicles:
 		return
-	var dead_ends := _dead_end_nodes()
-	if dead_ends.size() < 2:
+	var de := _dead_end_nodes()
+	var all_dead: Array = de["all"]
+	var entries: Array = de["entries"]
+	var exits: Array = de["exits"]
+	if all_dead.size() < 2:
 		return
-	var src_idx: int = _rng.randi_range(0, dead_ends.size() - 1)
-	var source: RoadNode = dead_ends[src_idx]
-	var tgt_idx: int = _rng.randi_range(0, dead_ends.size() - 2)
-	if tgt_idx >= src_idx:
-		tgt_idx += 1
-	var target: RoadNode = dead_ends[tgt_idx]
+	var sources: Array = entries if entries.size() > 0 else all_dead
+	var targets: Array = exits if exits.size() > 0 else all_dead
+	if sources.is_empty() or targets.is_empty():
+		return
+	var source: RoadNode = sources[_rng.randi_range(0, sources.size() - 1)]
+	var valid_targets: Array = []
+	for t in targets:
+		if t != source:
+			valid_targets.append(t)
+	if valid_targets.is_empty():
+		return
+	var target: RoadNode = valid_targets[_rng.randi_range(0, valid_targets.size() - 1)]
 
 	var source_lanes: Array = LaneGraph.lanes_departing_from(source)
 	if source_lanes.is_empty():
@@ -703,10 +726,3 @@ func _build_steps(lanes: Array) -> Array[PathStep]:
 					var sp: float = minf(lane.speed_limit, nxt.speed_limit)
 					steps.append(PathStep.make(arc.curve, sp, false, null, 0.0, arc))
 	return steps
-
-func _dead_end_nodes() -> Array:
-	var result: Array = []
-	for node in RoadGraph.nodes:
-		if node.segment_ends.size() == 1:
-			result.append(node)
-	return result

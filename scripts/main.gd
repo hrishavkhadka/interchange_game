@@ -3,6 +3,7 @@ extends Node3D
 var _builder: RoadBuilder
 var _vehicles: VehicleManager
 var _junction_editor: JunctionEditor
+var _marker_editor: MarkerEditor
 var _snap_toolbar: SnapToolbar
 var _road_type_menu: RoadTypeMenu
 var _main_toolbar: MainToolbar
@@ -49,6 +50,10 @@ func _ready() -> void:
 	lane_vis.name = "LaneVisualizer"
 	add_child(lane_vis)
 
+	_marker_editor = MarkerEditor.new()
+	_marker_editor.name = "MarkerEditor"
+	add_child(_marker_editor)
+
 	_vehicles = VehicleManager.new()
 	_vehicles.name = "VehicleManager"
 	add_child(_vehicles)
@@ -71,9 +76,13 @@ func _ready() -> void:
 
 	_main_toolbar.mode_requested.connect(func(m: int) -> void:
 		_junction_editor.set_active(false)
+		_marker_editor.set_active(false)
 		if m == 4:
 			_builder.set_mode(0)
 			_junction_editor.set_active(true)
+		elif m == 5:
+			_builder.set_mode(0)
+			_marker_editor.set_active(true)
 		else:
 			_builder.set_mode(m)
 		_snap_toolbar.set_expanded(snap_expanded and (m == 1))
@@ -91,11 +100,13 @@ func _ready() -> void:
 
 	GameState.state_changed.connect(func(s: int) -> void:
 		var build: bool = s == GameState.State.BUILD
+		_main_toolbar.set_interactive(build)
 		if build:
 			_builder.set_mode(_main_toolbar.get_mode())
 		else:
 			_builder.set_mode(0)
 			_junction_editor.set_active(false)
+			_marker_editor.set_active(false)
 		_snap_toolbar.visible = build and snap_expanded
 		_road_type_menu.visible = build and road_menu_expanded)
 
@@ -104,20 +115,22 @@ func _input(event: InputEvent) -> void:
 		var ke := event as InputEventKey
 		if not ke.pressed or ke.echo:
 			return
+		if GameState.is_build():
+			match ke.keycode:
+				KEY_1: _builder.set_road_type_index(0)
+				KEY_2: _builder.set_road_type_index(1)
+				KEY_3: _builder.set_road_type_index(2)
+				KEY_4: _builder.set_road_type_index(3)
+				KEY_5: _builder.set_road_type_index(4)
+				KEY_6: _builder.set_road_type_index(5)
+				KEY_7: _builder.set_road_type_index(6)
+				KEY_8: _builder.set_road_type_index(7)
+				KEY_9: _builder.set_road_type_index(8)
+				KEY_0: _builder.set_road_type_index(9)
+				KEY_K:
+					_vehicles.debug_lane_changes = not _vehicles.debug_lane_changes
+					print("[debug] lane-change logging = ", _vehicles.debug_lane_changes)
 		match ke.keycode:
-			KEY_1: _builder.set_road_type_index(0)
-			KEY_2: _builder.set_road_type_index(1)
-			KEY_3: _builder.set_road_type_index(2)
-			KEY_4: _builder.set_road_type_index(3)
-			KEY_5: _builder.set_road_type_index(4)
-			KEY_6: _builder.set_road_type_index(5)
-			KEY_7: _builder.set_road_type_index(6)
-			KEY_8: _builder.set_road_type_index(7)
-			KEY_9: _builder.set_road_type_index(8)
-			KEY_0: _builder.set_road_type_index(9)
-			KEY_K:
-				_vehicles.debug_lane_changes = not _vehicles.debug_lane_changes
-				print("[debug] lane-change logging = ", _vehicles.debug_lane_changes)
 			KEY_SPACE:
 				if GameState.is_build():
 					GameState.start_play()
