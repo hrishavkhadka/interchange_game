@@ -14,6 +14,7 @@ func _ready() -> void:
 	ArcOverrides.overrides_changed.connect(_rebuild)
 
 func _rebuild() -> void:
+	ArcOverrides.refresh_indices()
 	lanes.clear()
 	arcs.clear()
 	arcs_by_from_lane.clear()

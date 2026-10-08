@@ -21,6 +21,7 @@ RoadGraph="*uid://0kp1norpbk46"
 LaneGraph="*uid://dci64qqh8ukn8"
 ArcOverrides="*uid://djm5edq15p388"
 GameState="*uid://ct61rikpl764x"
+LevelIO="*uid://dh07njvt5jbyb"
 
 [debug]
 

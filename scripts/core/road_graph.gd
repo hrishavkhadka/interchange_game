@@ -8,6 +8,14 @@ const SNAP_RADIUS := 5.0
 var nodes: Array[RoadNode] = []
 var segments: Array[RoadSegment] = []
 var _next_id := 1
+var _suppress: bool = false
+
+func begin_batch() -> void:
+	_suppress = true
+
+func end_batch() -> void:
+	_suppress = false
+	graph_changed.emit()
 
 func find_nearest(pos: Vector3, radius: float = SNAP_RADIUS) -> RoadNode:
 	var best: RoadNode = null
@@ -28,7 +36,8 @@ func get_or_create(pos: Vector3, is_waypoint: bool = false) -> RoadNode:
 	_next_id += 1
 	nodes.append(node)
 	node_added.emit(node)
-	graph_changed.emit()
+	if not _suppress:
+		graph_changed.emit()
 	return node
 
 func get_or_create_waypoint(pos: Vector3) -> RoadNode:
@@ -37,11 +46,13 @@ func get_or_create_waypoint(pos: Vector3) -> RoadNode:
 func register_segment(seg: RoadSegment) -> void:
 	if not segments.has(seg):
 		segments.append(seg)
-		graph_changed.emit()
+		if not _suppress:
+			graph_changed.emit()
 
 func unregister_segment(seg: RoadSegment) -> void:
 	segments.erase(seg)
-	graph_changed.emit()
+	if not _suppress:
+		graph_changed.emit()
 
 func clear() -> void:
 	nodes.clear()
