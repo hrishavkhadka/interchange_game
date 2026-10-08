@@ -35,23 +35,26 @@ func _ready() -> void:
 func _build_bottom_left() -> void:
 	var panel := PanelContainer.new()
 	panel.position = Vector2(16, 16)
-	panel.custom_minimum_size = Vector2(280, 140)
+	panel.modulate = Color(1, 1, 1, 0.72)
 	add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
+	vbox.add_theme_constant_override("separation", 2)
 	panel.add_child(vbox)
 
 	_cost_label = Label.new()
 	_cost_label.text = "Spent: 0"
+	_cost_label.add_theme_font_size_override("font_size", 12)
 	vbox.add_child(_cost_label)
 
 	_road_type_label = Label.new()
 	_road_type_label.text = "Road: 2-lane two-way"
+	_road_type_label.add_theme_font_size_override("font_size", 12)
 	vbox.add_child(_road_type_label)
 
 	_hint_label = Label.new()
-	_hint_label.text = "LMB: place road / act\nRMB/Esc: cancel\n1-9/0: road type\nL: lane overlay\nK: lane debug\nSpace: play/pause"
+	_hint_label.text = "LMB: place / act\nRMB/Esc: cancel\n1-9/0: road type  L: lanes\nSpace: play/pause"
+	_hint_label.add_theme_font_size_override("font_size", 11)
 	_hint_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8))
 	vbox.add_child(_hint_label)
 

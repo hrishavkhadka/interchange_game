@@ -8,6 +8,8 @@ var position: Vector3
 var is_waypoint: bool = false
 var is_entry: bool = false
 var is_exit: bool = false
+# Short label like "E1" or "X2". Set when marking, cleared when unmarking.
+var map_label: String = ""
 # Only meaningful for entry nodes. Maps exit_node_id -> vehicle count.
 var demand: Dictionary = {}
 var segment_ends: Array = []
