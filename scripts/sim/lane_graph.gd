@@ -114,46 +114,65 @@ func _make_lane(seg: RoadSegment, lane_index: int, direction: String, start_trim
 	lane.speed_limit = seg.road_type.speed_limit_kmh / 3.6
 	return lane
 
+# Uses the arc generator to decide which (from_lane, to_lane) pairs exist at
+# each junction node. Falls back to the naive all-to-all builder if the
+# generator produces an empty set for a node that should have connections.
 func _build_arcs() -> void:
 	for lane in lanes:
 		lane.next_arcs.clear()
 		lane.prev_arcs.clear()
 
-	var by_from_node: Dictionary = {}
-	for lane in lanes:
-		if lane.from_node == null:
+	for node in RoadGraph.nodes:
+		if node.segment_ends.size() < 2:
 			continue
-		var nid: int = lane.from_node.id
-		if not by_from_node.has(nid):
-			by_from_node[nid] = []
-		by_from_node[nid].append(lane)
-
-	for arriving in lanes:
-		if arriving.to_node == null:
-			continue
-		var node: RoadNode = arriving.to_node
-		var departing_list: Array = by_from_node.get(node.id, [])
-		for d in departing_list:
-			var departing: Lane = d
-			if departing.segment == arriving.segment:
+		var pairs: Array = ArcGenerator.generate(node, lanes)
+		if pairs.is_empty() and not node.is_pass_through():
+			pairs = _fallback_pairs(node)
+		for p_v in pairs:
+			var p: Dictionary = p_v
+			var from_lane: Lane = p["from_lane"]
+			var to_lane: Lane = p["to_lane"]
+			if from_lane == null or to_lane == null:
 				continue
-			var curve := _make_transition(arriving, departing)
+			if from_lane.next_arcs.has(to_lane):
+				continue
+			var curve := _make_transition(from_lane, to_lane)
 			if curve == null:
 				continue
-			var arc := LaneArc.make(arriving, departing, node, curve)
+			var arc := LaneArc.make(from_lane, to_lane, node, curve)
 			if node.is_pass_through():
 				arc.enabled = true
 			else:
-				arc.enabled = not ArcOverrides.is_disabled(node, arriving, departing)
-			arriving.next_arcs[departing] = arc
-			departing.prev_arcs[arriving] = arc
+				arc.enabled = not ArcOverrides.is_disabled(node, from_lane, to_lane)
+			from_lane.next_arcs[to_lane] = arc
+			to_lane.prev_arcs[from_lane] = arc
 			arcs.append(arc)
-			if not arcs_by_from_lane.has(arriving):
-				arcs_by_from_lane[arriving] = []
-			arcs_by_from_lane[arriving].append(arc)
+			if not arcs_by_from_lane.has(from_lane):
+				arcs_by_from_lane[from_lane] = []
+			arcs_by_from_lane[from_lane].append(arc)
 			if not arcs_by_node.has(node.id):
 				arcs_by_node[node.id] = []
 			arcs_by_node[node.id].append(arc)
+
+# Naive all-to-all fallback, only used if the generator returns nothing at a
+# real junction. Should not normally fire.
+func _fallback_pairs(node: RoadNode) -> Array:
+	var result: Array = []
+	var incoming: Array = []
+	var outgoing: Array = []
+	for lane in lanes:
+		if lane.to_node == node and lane.from_node != node:
+			incoming.append(lane)
+		if lane.from_node == node and lane.to_node != node:
+			outgoing.append(lane)
+	for il_v in incoming:
+		var il: Lane = il_v
+		for ol_v in outgoing:
+			var ol: Lane = ol_v
+			if ol.segment == il.segment:
+				continue
+			result.append({ "from_lane": il, "to_lane": ol })
+	return result
 
 func _build_connections_from_arcs() -> void:
 	for lane in lanes:
@@ -305,8 +324,8 @@ func _arc_curves_conflict(ca: Curve3D, cb: Curve3D) -> bool:
 		var t: float = float(i) / float(CONFLICT_SAMPLES)
 		pts_a.append(ca.sample_baked(t * la))
 	for i in range(CONFLICT_SAMPLES + 1):
-		var t: float = float(i) / float(CONFLICT_SAMPLES)
-		var p: Vector3 = cb.sample_baked(t * lb)
+		var t2: float = float(i) / float(CONFLICT_SAMPLES)
+		var p: Vector3 = cb.sample_baked(t2 * lb)
 		for q in pts_a:
 			var d: float = Vector2(p.x - q.x, p.z - q.z).length()
 			if d < CONFLICT_DIST:
